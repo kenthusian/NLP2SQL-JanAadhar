@@ -19,6 +19,21 @@ COMMON_CANONICAL_TERMS = {
     "district": ["district", "zilla"],
 }
 
+# Bank abbreviation → full stored DB name mapping.
+# Must be checked BEFORE the len < 4 guard in replace() because many abbreviations
+# (sbi, pnb, bob, uco, cbi, ubi) are exactly 3 characters and would be skipped otherwise.
+BANK_ABBREVIATIONS: dict[str, str] = {
+    "sbi":   "STATE BANK OF INDIA",
+    "pnb":   "PUNJAB NATIONAL BANK",
+    "bob":   "BANK OF BARODA",
+    "boi":   "BANK OF INDIA",
+    "hdfc":  "HDFC BANK",
+    "icici": "ICICI BANK LIMITED",
+    "uco":   "UCO BANK",
+    "cbi":   "CENTRAL BANK OF INDIA",
+    "ubi":   "UNION BANK OF INDIA",
+}
+
 DIRECT_CORRECTIONS = {
     "femail": "female",
     "femal": "female",
@@ -33,6 +48,8 @@ DIRECT_CORRECTIONS = {
     "jaypur": "Jaipur",
     "jodpur": "Jodhpur",
     "bikanr": "Bikaner",
+    "familys": "families",
+    "famlies": "families",
 }
 
 
@@ -69,7 +86,15 @@ class QueryNormalizer:
         def replace(match: re.Match[str]) -> str:
             token = match.group(0)
             lowered = token.lower()
-            
+
+            # ── MUST be FIRST: 3-char bank abbreviations (sbi, pnb, bob, uco…)
+            #    would be silently skipped by the len < 4 guard further below.
+            #    Bank terms are always expanded regardless of surrounding context.
+            if lowered in BANK_ABBREVIATIONS:
+                replacement = BANK_ABBREVIATIONS[lowered]
+                corrections[token] = replacement
+                return replacement
+
             # Protect proper nouns, unless they are explicitly in direct corrections
             is_protected = (lowered in protected_words)
             if is_protected and lowered in DIRECT_CORRECTIONS:

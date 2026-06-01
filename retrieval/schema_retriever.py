@@ -22,6 +22,8 @@ BANK_TERMS = {
     # Common bank abbreviations used in queries
     "sbi", "pnb", "bob", "hdfc", "icici", "uco", "canara", "baroda",
     "gramin", "cooperative", "union bank", "central bank", "indian bank",
+    # Unbanked / no-bank-account query terms
+    "unbanked", "no bank", "without bank", "no account", "without account",
 }
 IDENTITY_TERMS = {"aadhaar", "jan", "voter", "pan", "identity", "id", "mobile", "phone", "email", "photo"}
 DISABILITY_TERMS = {"disabled", "disability", "divyang"}
@@ -152,7 +154,15 @@ class SchemaRetriever:
                 columns.add(f'{relationship["from_table"]}.{relationship["from_column"]}')
                 columns.add(f'{relationship["to_table"]}.{relationship["to_column"]}')
 
-        if any(token in question.lower() for token in ["show", "list", "display", "beneficiary", "all"]):
+        if any(token in question.lower() for token in [
+            "show", "list", "display", "beneficiary", "all",
+            # Person-listing signals: 'who' and imperative fetch verbs.
+            # 'has'/'members'/'families'/'most' are intentionally excluded
+            # because they fire on aggregate queries (COUNT/SUM/AVG) where
+            # adding member_name to context causes the LLM to mix SELECT
+            # columns with aggregates, producing invalid SQL.
+            "who", "find", "fetch", "get",
+        ]):
             for candidate in ["member.member_name", "family.jan_aadhaar_number"]:
                 table, column = candidate.split(".")
                 if table in tables and any(c.table == table and c.column == column for c in COLUMNS):

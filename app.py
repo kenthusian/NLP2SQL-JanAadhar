@@ -17,6 +17,22 @@ from validation.sql_validator import SQLValidator
 
 from database.schema_metadata import RAJASTHAN_DISTRICTS_41
 
+# ── Module-level lookups ─────────────────────────────────────────────────────
+# Pre-built for O(1) access inside _post_process_sql on every call.
+_DISTRICTS_LOWER    = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
+_DISTRICT_CANONICAL = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
+
+# Phrases that signal an "unbanked / no bank account" query
+_NO_BANK_WORDS = [
+    "no bank", "without bank", "don't have", "do not have",
+    "no account", "unbanked", "without account",
+]
+
+# Phrases that signal the user explicitly asked about member_type
+_MEMBER_TYPE_WORDS = [
+    "regular member", "mem type", "member type", "hof", "head of family",
+]
+
 
 @dataclass
 class PipelineOutput:
@@ -86,6 +102,15 @@ def _post_process_sql(sql: str) -> str:
         ),
         sql, flags=re.IGNORECASE,
     )
+    # Fix LIKE 'val' without wildcards (e.g. bank_name LIKE 'SBI')
+    sql = re.sub(
+        r"\b((?:\w+\.)?bank_name)\s*LIKE\s*'([^'%]+)'",
+        lambda m: (
+            m.group(0) if m.group(0).upper().startswith("UPPER(")
+            else f"UPPER({m.group(1)}) LIKE '%{m.group(2).strip().upper()}%'"
+        ),
+        sql, flags=re.IGNORECASE,
+    )
 
     # ── Step 3: Categorical value normalization ───────────────────────────────
     # The real dataset will have GEN/General/GENERAL/general, Widow/widow/WIDOW,
@@ -141,6 +166,25 @@ def _post_process_sql(sql: str) -> str:
         cat_replacer, sql, flags=re.IGNORECASE,
     )
 
+    # ── Step 4 (new): Categorical LIKE → = ────────────────────────────────
+    # The LLM sometimes uses LIKE for exact-match categorical columns.
+    # gender, caste_category, marital_status must always use = not LIKE.
+    sql = re.sub(
+        r"\b((?:\w+\.)?gender)\s+LIKE\s+'%?(Male|Female)%?'",
+        lambda m: f"{m.group(1)} = '{m.group(2)}'",
+        sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"\b((?:\w+\.)?caste_category)\s+LIKE\s+'%?(SC|ST|OBC|GEN)%?'",
+        lambda m: f"{m.group(1)} = '{m.group(2).upper()}'",
+        sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"\b((?:\w+\.)?marital_status)\s+LIKE\s+'%?(Married|Unmarried|Widow)%?'",
+        lambda m: f"{m.group(1)} = '{m.group(2)}'",
+        sql, flags=re.IGNORECASE,
+    )
+
     # ── Step 4: education — 'illiterate' is stored lowercase; others Title Case ─
     # Use LOWER() for illiterate to match regardless of DB casing.
     # For all other education values use LIKE for partial/case-insensitive match.
@@ -169,18 +213,18 @@ def _post_process_sql(sql: str) -> str:
         return match.group(0)
 
     sql = re.sub(
-        r"\b((?:\w+\.)?is_rural)\s*=\s*['\"]?(\w+)['\"]?",
+        r"\b((?:\w+\.)?is_rural)\s*(?:=|LIKE)\s*['\"]?(\w+)['\"]?",
         rural_replacer, sql, flags=re.IGNORECASE,
     )
 
-    # ── Step 6: District casing normalization (known districts only) ──────────
-    def district_exact_replacer(match):
+    # ── Step 6: District casing normalisation (known districts only) ────────
+    def district_exact_replacer(match: re.Match[str]) -> str:
         col = match.group(1)
         val = match.group(2).strip().lower()
-        for canonical_district in RAJASTHAN_DISTRICTS_41:
-            if val == canonical_district.lower():
-                return f"{col} = '{canonical_district}'"
-        # Not a known district — Step 7 will redirect it
+        canonical = _DISTRICT_CANONICAL.get(val)   # O(1) dict lookup
+        if canonical:
+            return f"{col} = '{canonical}'"
+        # Not a known district — Step 9 will redirect it
         return match.group(0)
 
     sql = re.sub(
@@ -192,22 +236,174 @@ def _post_process_sql(sql: str) -> str:
         district_exact_replacer, sql, flags=re.IGNORECASE,
     )
 
-    # ── Step 7: Redirect district → block/village for non-district locations ──
-    known_districts_lower = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
+    # ── Step 8 (new): District LIKE → = for known districts ──────────────
+    # Convert "district LIKE '%Jaipur%'" → "district = 'Jaipur'" when the
+    # stripped value is a known district, preventing partial-match false positives.
+    def district_like_replacer(match: re.Match[str]) -> str:
+        col = match.group(1)
+        val = match.group(2).strip()
+        canonical = _DISTRICT_CANONICAL.get(val.lower())
+        if canonical:
+            return f"{col} = '{canonical}'"
+        return match.group(0)
 
-    redirect_pattern = (
-        r"\b((?:[A-Za-z_]\w*\.)?)district"
-        r"\s*(?:=\s*'([^']+)'|LIKE\s*'%([^'%]+)%')"
+    sql = re.sub(
+        r"\b((?:\w+\.)?district)\s+LIKE\s+'%?([^'%]+?)%?'",
+        district_like_replacer, sql, flags=re.IGNORECASE,
     )
 
-    def district_redirect_full(match):
+    # ── Step 9: Redirect district → block/village for non-district locations ──
+    # (previously Step 7 — now uses module-level _DISTRICTS_LOWER)
+    redirect_pattern = (
+        r"\b((?:[A-Za-z_]\w*\.)?)"
+        r"district\s*(?:=\s*'([^']+)'|LIKE\s*'%([^'%]+)%')"
+    )
+
+    def district_redirect_full(match: re.Match[str]) -> str:
         prefix = match.group(1) or ""
         val = (match.group(2) or match.group(3) or "").strip()
-        if not val or val.lower() in known_districts_lower:
+        if not val or val.lower() in _DISTRICTS_LOWER:
             return match.group(0)
         return f"({prefix}block LIKE '%{val}%' OR {prefix}village LIKE '%{val}%')"
 
     sql = re.sub(redirect_pattern, district_redirect_full, sql, flags=re.IGNORECASE)
+
+    # ── Steps 10-15 (new): Family member count post-processing ───────────────
+
+    # Step 10: COUNT(member.member_id) → COUNT(*)
+    sql = re.sub(
+        r"COUNT\s*\(\s*member\.member_id\s*\)",
+        "COUNT(*)",
+        sql, flags=re.IGNORECASE,
+    )
+
+    # Step 11: Fix broken AVG subquery alias (e.g. AVG(T2.member_count) when alias is T1).
+    # Detects the actual subquery alias from the AS clause and substitutes it.
+    def fix_avg_alias(sql_str: str) -> str:
+        inner_match = re.search(r'\)\s+AS\s+(\w+)\s*$', sql_str.rstrip(';'), re.IGNORECASE)
+        if inner_match:
+            correct_alias = inner_match.group(1)
+            sql_str = re.sub(
+                r'AVG\s*\(\s*(\w+)\.member_count\s*\)',
+                lambda m: (
+                    f"AVG({correct_alias}.member_count)"
+                    if m.group(1).lower() != correct_alias.lower()
+                    else m.group(0)
+                ),
+                sql_str, flags=re.IGNORECASE,
+            )
+        return sql_str
+
+    sql = fix_avg_alias(sql)
+
+    # Step 12: Rename misleading 'family_count' alias → 'member_count'
+    sql = re.sub(
+        r"COUNT\(\*\)\s+AS\s+family_count",
+        "COUNT(*) AS member_count",
+        sql, flags=re.IGNORECASE,
+    )
+
+    # Step 13: Remove stray ", table.family_id" from SELECT when family_head_name is present
+    if re.search(r"family_head_name", sql, re.IGNORECASE):
+        sql = re.sub(
+            r",\s*\w+\.family_id\b",
+            "",
+            sql, flags=re.IGNORECASE,
+        )
+
+    # Step 14: Replace bare table.family_id in SELECT with family.family_head_name.
+    # BUG FIX: always use the 'family.' prefix — family_head_name lives on the
+    # family table, NOT on the member table. Never reuse the captured source prefix.
+    sql = re.sub(
+        r"\bSELECT\s+(COUNT\(\*\)\s+AS\s+\w+,\s*)\w+\.family_id\b",
+        r"SELECT \1family.family_head_name",
+        sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"\bSELECT\s+\w+\.family_id,\s*(COUNT\(\*\))",
+        r"SELECT family.family_head_name, \1",
+        sql, flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r"\bSELECT\s+DISTINCT\s+\w+\.family_id\b",
+        "SELECT DISTINCT family.family_head_name",
+        sql, flags=re.IGNORECASE,
+    )
+
+    # Step 15: Remove unnecessary 'AS display_column' alias
+    sql = re.sub(
+        r"\b(\w+\.family_head_name)\s+AS\s+display_column\b",
+        r"\1",
+        sql, flags=re.IGNORECASE,
+    )
+
+    return sql
+
+
+def _fix_no_bank_sql(sql: str, question: str) -> str:
+    """
+    Post-process SQL for "no bank account" / unbanked queries.
+    Ensures LEFT JOIN is used (not INNER JOIN / bare JOIN) and that
+    bank_details.bank_id IS NULL is included in the WHERE clause.
+    Called immediately after _post_process_sql in the generation loop.
+    """
+    import re
+
+    if not any(w in question.lower() for w in _NO_BANK_WORDS):
+        return sql
+
+    # ── Step 1: Inject bank_details LEFT JOIN if LLM omitted it entirely ─────
+    if "bank_details" not in sql.lower():
+        # BUG FIX: use a keyword-aware negative lookahead so SQL keywords like
+        # JOIN/WHERE/ON are not consumed as a table alias by the optional alias group.
+        _KW = r"(?!(?:JOIN|WHERE|ON|LEFT|RIGHT|INNER|OUTER|GROUP|ORDER|HAVING|LIMIT|SELECT|FROM)\b)"
+        sql = re.sub(
+            rf"\b(FROM\s+member(?:\s+(?:AS\s+)?{_KW}\w+)?)\b",
+            r"\1 LEFT JOIN bank_details ON bank_details.member_id = member.member_id",
+            sql, flags=re.IGNORECASE, count=1,
+        )
+
+    # ── Step 2: Normalise all bank_details JOINs to LEFT JOIN ────────────────
+    # First promote INNER JOIN → LEFT JOIN explicitly.
+    sql = re.sub(
+        r"\bINNER\s+JOIN\s+bank_details\b",
+        "LEFT JOIN bank_details",
+        sql, flags=re.IGNORECASE,
+    )
+    # Replace any remaining bare/FULL/CROSS JOIN bank_details with LEFT JOIN.
+    # Then clean up double qualifiers (e.g. "LEFT LEFT JOIN").
+    sql = re.sub(r"\bJOIN\s+bank_details\b", "LEFT JOIN bank_details", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bLEFT\s+LEFT\s+JOIN\b",  "LEFT JOIN",  sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bRIGHT\s+LEFT\s+JOIN\b", "RIGHT JOIN", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bFULL\s+LEFT\s+JOIN\b",  "FULL JOIN",  sql, flags=re.IGNORECASE)
+
+    # ── Step 3: Add IS NULL check if missing ─────────────────────────────────
+    if "bank_details" in sql.lower() and "IS NULL" not in sql.upper():
+        if re.search(r"\bWHERE\b", sql, re.IGNORECASE):
+            sql = re.sub(
+                r"\bWHERE\b",
+                "WHERE bank_details.bank_id IS NULL AND",
+                sql, flags=re.IGNORECASE, count=1,
+            )
+        else:
+            # Try to insert before GROUP BY / ORDER BY / LIMIT
+            injected = re.sub(
+                r"\b(GROUP\s+BY|ORDER\s+BY|LIMIT)\b",
+                r"WHERE bank_details.bank_id IS NULL \1",
+                sql, flags=re.IGNORECASE, count=1,
+            )
+            if injected == sql:          # no clause found — append to end
+                sql = sql.rstrip(";") + " WHERE bank_details.bank_id IS NULL;"
+            else:
+                sql = injected
+
+    # ── Step 4: Strip spurious member_type = 'MEM' the LLM adds ─────────────
+    if not any(w in question.lower() for w in _MEMBER_TYPE_WORDS):
+        sql = re.sub(
+            r"\s+AND\s+(?:\w+\.)?member_type\s*=\s*'MEM'",
+            "",
+            sql, flags=re.IGNORECASE,
+        )
 
     return sql
 
@@ -238,6 +434,7 @@ def generate_sql_pipeline(
         prompt = prompt_builder.build(retrieval, previous_error=previous_error)
         sql = generator.generate(prompt)
         sql = _post_process_sql(sql)
+        sql = _fix_no_bank_sql(sql, question)   # handles unbanked / no-account queries
         validation = validator.validate(
             sql,
             allowed_tables=retrieval.tables,

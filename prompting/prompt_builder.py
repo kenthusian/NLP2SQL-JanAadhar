@@ -142,8 +142,22 @@ class PromptBuilder:
             dynamic_rules.append(
                 "- bank_name filtering: Bank names are stored inconsistently (UPPER, Title, mixed case). "
                 "Always use UPPER(bank_name) LIKE '%SEARCH_TERM_IN_UPPER%'. "
-                "Example: UPPER(bank_name) LIKE '%STATE BANK%' matches 'STATE BANK OF INDIA', 'State Bank of India', etc."
+                "Example: UPPER(bank_name) LIKE '%STATE BANK%' matches 'STATE BANK OF INDIA', 'State Bank of India', etc. "
+                "If filtering by district too, JOIN the family table."
             )
+
+        # Prompt rule for unbanked / no-bank-account queries
+        if "bank_details.bank_id" in result.columns or "bank_details.bank_name" in result.columns:
+            _q = result.question.lower()
+            if any(w in _q for w in ["no bank", "without bank", "don't have",
+                                      "do not have", "no account", "unbanked",
+                                      "without account"]):
+                dynamic_rules.append(
+                    "- no bank account query: Use LEFT JOIN bank_details ON "
+                    "bank_details.member_id = member.member_id "
+                    "WHERE bank_details.bank_id IS NULL. "
+                    "Never use INNER JOIN for this — INNER JOIN returns zero rows for unbanked members."
+                )
 
         if "family.is_rural" in result.columns:
             dynamic_rules.append(
@@ -153,6 +167,18 @@ class PromptBuilder:
                 "  * Rural families store location in block/village/gram_panchayat; urban families use city/ward."
             )
 
+        # ── Family member count rule ────────────────────────────────────────────────
+        # IMPORTANT: This block must be BEFORE dynamic_rules_block is computed.
+        # If placed after, the family count rule would be silently dropped from every prompt.
+        if "family.family_id" in result.columns and "member.family_id" in result.columns:
+            dynamic_rules.append(
+                "- member counts per family: GROUP BY family.family_id, family.family_head_name "
+                "then HAVING COUNT(*) > N. "
+                "SELECT family.family_head_name — never select family_id (it is an internal surrogate key). "
+                "Use COUNT(*) not COUNT(member.member_id)."
+            )
+
+        # ── Compute AFTER all appends so every rule is included ───────────────
         dynamic_rules_block = "\n".join(dynamic_rules)
         if dynamic_rules_block:
             dynamic_rules_block = "\n" + dynamic_rules_block

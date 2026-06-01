@@ -61,6 +61,7 @@ class BankDetails(Base):
     bank_account: Mapped[str] = mapped_column(String(32), index=True)
     bank_name: Mapped[str] = mapped_column(String(120), index=True)
     ifsc_code: Mapped[str] = mapped_column(String(16), index=True)
+    dbt_status: Mapped[str] = mapped_column(String(24), default="Active")
 
     member: Mapped[Member] = relationship(back_populates="bank_details")
 
@@ -68,3 +69,29 @@ class BankDetails(Base):
 Index("ix_member_gender_caste_age", Member.gender, Member.caste_category, Member.age)
 Index("ix_family_geo", Family.district, Family.block, Family.gram_panchayat, Family.village)
 
+
+class SchemeBenefit(Base):
+    __tablename__ = "scheme_benefits"
+
+    scheme_benefit_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    member_id: Mapped[int] = mapped_column(ForeignKey("member.member_id"), index=True)
+    scheme_name: Mapped[str] = mapped_column(String(120))
+    bpl_status: Mapped[str | None] = mapped_column(String(16))
+    apl_status: Mapped[str | None] = mapped_column(String(16))
+    nfsa_status: Mapped[str | None] = mapped_column(String(24))
+    pension_eligibility: Mapped[str | None] = mapped_column(String(24))
+    beneficiary_status: Mapped[str | None] = mapped_column(String(24))
+    benefit_amount: Mapped[int | None] = mapped_column(Integer)
+
+
+class Verification(Base):
+    __tablename__ = "verification"
+
+    verification_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    member_id: Mapped[int] = mapped_column(
+        ForeignKey("member.member_id"), unique=True, index=True
+    )
+    ekyc_status: Mapped[str] = mapped_column(String(24))
+    aadhaar_seeding_status: Mapped[str] = mapped_column(String(24))
+    jan_aadhaar_status: Mapped[str] = mapped_column(String(24))
+    last_updated_date: Mapped[Date | None] = mapped_column(Date)

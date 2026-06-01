@@ -13,7 +13,11 @@ def test_prompt_uses_only_retrieved_columns():
     )
     prompt = PromptBuilder().build(result)
     assert "member.gender" in prompt
-    assert "- family" not in prompt
+    # Verify 'family' table is NOT listed in the Available tables section.
+    # Note: '- family' appears elsewhere in the prompt instructions (e.g. '- family head or HOF'),
+    # so we scope the check to the tables section only.
+    tables_section = prompt[prompt.index("Available tables:"):prompt.index("Relevant columns:")]
+    assert "family" not in tables_section
     assert "Do not invent tables or columns" in prompt
 
 
