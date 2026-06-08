@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from config.settings import settings
 from database.excel_importer import import_excel_dataset
 from database.query_results import execute_select_preview
-from database.sample_data import seed_demo_data
 from embeddings.faiss_store import FaissSchemaStore
 from llm.ollama_client import OllamaModelManager, OllamaSqlGenerator
 from normalization.query_normalizer import normalize_query
@@ -33,6 +32,30 @@ _MEMBER_TYPE_WORDS = [
     "regular member", "mem type", "member type", "hof", "head of family",
 ]
 
+_CASTE_GROUPS = [
+    {"rajput", "rajpoot", "राजपूत"},
+    {"jat", "जाट"},
+    {"mina", "meena", "मीना"},
+    {"brahman", "brahmin", "brahaman", "bhraman", "bharmn", "ब्राह्मण", "ब्राहम्ण"},
+    {"bairwa", "berwa", "बैरवा"},
+    {"gurjar", "gujar", "गुर्जर"},
+    {"bazigar", "बाजीगर"},
+    {"dhobi", "धोबी"},
+    {"darzi", "दर्जी"},
+    {"fakir", "फकीर"},
+    {"valmiki", "balmiki", "वाल्मीकि"},
+    {"chhipa", "chhippa", "छीपा"},
+    {"daroga", "दरोगा"},
+    {"jain", "जैन"},
+    {"dangi", "डांगी"},
+    {"deshwali", "देशवाली"},
+    {"sindhi", "सिंधी"},
+    {"arai", "अराई"},
+    {"agrawal", "agarwal", "अग्रवाल"},
+    {"mahajan", "महाजन"}
+]
+
+
 
 @dataclass
 class PipelineOutput:
@@ -45,9 +68,12 @@ class PipelineOutput:
     confidence: float
     validation_errors: list[str]
     optimization: OptimizationReport | None
+    is_fuzzy: bool = False
+    fuzzy_target: str | None = None
 
 
-def _post_process_sql(sql: str) -> str:
+
+def _post_process_sql(sql: str, fuzzy_target: str | None = None) -> str:
     """
     Post-process LLM-generated SQL to fix predictable systematic errors:
     1. Free-text columns: always use LIKE for partial matching
@@ -59,6 +85,51 @@ def _post_process_sql(sql: str) -> str:
     7. District redirect: non-district locations → block OR village search
     """
     import re
+
+    # ── Step 0: Fix mismatched table aliases for columns ─────────────────────
+    _COL_TO_TABLE = {}
+    _MEMBER_COLS = {
+        "member_name", "father_name", "mother_name", "spouse_name", "date_of_birth", "age",
+        "gender", "mobile_number", "caste_category", "marital_status",
+        "member_type", "relation_with_hof", "caste", "income", "occupation",
+        "minority", "education", "jan_aadhaar_member_id"
+    }
+    _FAMILY_COLS = {
+        "jan_aadhaar_number", "family_head_name", "district",
+        "city", "block", "gram_panchayat", "village", "ward", "is_rural"
+    }
+    _BANK_COLS = {
+        "bank_id", "bank_account", "bank_name", "ifsc_code", "dbt_status"
+    }
+    for c in _MEMBER_COLS:
+        _COL_TO_TABLE[c] = "member"
+    for c in _FAMILY_COLS:
+        _COL_TO_TABLE[c] = "family"
+    for c in _BANK_COLS:
+        _COL_TO_TABLE[c] = "bank_details"
+
+    alias_to_table = {}
+    table_to_alias = {}
+    for table_name in ["member", "family", "bank_details"]:
+        match = re.search(rf"\b{table_name}\s+(?:AS\s+)?(\w+)\b", sql, re.IGNORECASE)
+        if match:
+            alias = match.group(1)
+            if alias.upper() not in {"JOIN", "ON", "WHERE", "GROUP", "ORDER", "LIMIT", "SELECT", "FROM", "INNER", "LEFT", "RIGHT", "CROSS", "OUTER", "NATURAL", "AS"}:
+                alias_to_table[alias.lower()] = table_name
+                table_to_alias[table_name] = alias
+
+    def prefix_replacer(match):
+        alias = match.group(1)
+        col = match.group(2).lower()
+        owner_table = _COL_TO_TABLE.get(col)
+        if owner_table:
+            current_table = alias_to_table.get(alias.lower())
+            if current_table != owner_table:
+                correct_alias = table_to_alias.get(owner_table, owner_table)
+                return f"{correct_alias}.{match.group(2)}"
+        return match.group(0)
+
+    sql = re.sub(r"\b(\w+)\.(\w+)\b", prefix_replacer, sql)
 
     # ── Step 1: Free-text columns → LIKE '%val%' ─────────────────────────────
     # Exact '=' will fail for names, castes, villages, occupations etc. because
@@ -80,6 +151,118 @@ def _post_process_sql(sql: str) -> str:
         rf'\b((?:\w+\.)?(?:{_FREE_TEXT_COLS}))\s*=\s*"([^"]+)"',
         text_replacer, sql, flags=re.IGNORECASE,
     )
+
+    # ── Step 1.0: Fuzzy Name Broadening ──────────────────────────────────────
+    if fuzzy_target:
+        prefix = fuzzy_target[:3]
+        target_lower = fuzzy_target.lower()
+        def fuzzy_repl(match):
+            col_part = match.group(1)
+            val = match.group(2).strip()
+            from rapidfuzz.distance import JaroWinkler
+            score = JaroWinkler.similarity(target_lower, val.lower())
+            if score > 1.0:
+                score = score / 100.0
+            if score >= 0.60 or val.lower() in target_lower or target_lower in val.lower():
+                return f"{col_part} LIKE '%{prefix}%'"
+            return match.group(0)
+        _NAME_COLS = "member_name|father_name|mother_name|spouse_name|family_head_name"
+        sql = re.sub(
+            rf"\b((?:\w+\.)?(?:{_NAME_COLS}))\s+LIKE\s+'%?([^'%]+)%?'",
+            fuzzy_repl, sql, flags=re.IGNORECASE,
+        )
+
+    # ── Step 1.1: Caste IN Clause Expansion ──────────────────────────────────
+    # Replaces IN clauses for castes with the full bilingual group.
+    def caste_in_replacer(match):
+        col = match.group(1)
+        in_content = match.group(2)
+        vals = [v[0] or v[1] for v in re.findall(r"'([^']+)'|\"([^\"]+)\"", in_content)]
+        for val in vals:
+            val_l = val.strip().lower()
+            for group in _CASTE_GROUPS:
+                if val_l in group:
+                    conditions = []
+                    for term in sorted(group, key=lambda x: len(x), reverse=True):
+                        formatted = term.title() if term.isascii() else term
+                        conditions.append(f"{col} LIKE '%{formatted}%'")
+                    return "(" + " OR ".join(conditions) + ")"
+        return match.group(0)
+
+    sql = re.sub(
+        r"\b((?:\w+\.)?caste)\s+IN\s+\(([^)]+)\)",
+        caste_in_replacer, sql, flags=re.IGNORECASE,
+    )
+
+    # ── Step 1.2: Caste Bilingual Expansion ──────────────────────────────────
+
+    # Expands single-language caste filters to search in both English and Hindi.
+    def caste_bilingual_replacer(match):
+        col = match.group(1)
+        val = match.group(2).strip()
+        val_l = val.lower()
+        for group in _CASTE_GROUPS:
+            if val_l in group:
+                conditions = []
+                for term in sorted(group, key=lambda x: len(x), reverse=True):
+                    formatted = term.title() if term.isascii() else term
+                    conditions.append(f"{col} LIKE '%{formatted}%'")
+                return "(" + " OR ".join(conditions) + ")"
+        return match.group(0)
+
+    sql = re.sub(
+        r"\b((?:\w+\.)?caste)\s+LIKE\s+'%?([^'%]+)%?'",
+        caste_bilingual_replacer, sql, flags=re.IGNORECASE,
+    )
+
+    # ── Step 1.5: Strip spurious IS NOT NULL on nullable location sub-columns ─
+    # The LLM sometimes adds conditions like `f.block IS NOT NULL` or
+    # `f.ward IS NOT NULL` when it JOINs the family table but has no real
+    # location filter to apply. Remove these as they silently exclude families
+    # that have no block/ward recorded (rural-only or urban-only families).
+    _NULLABLE_LOC_COLS = r"block|ward|village|gram_panchayat|city"
+    sql = re.sub(
+        rf"\s+AND\s+(?:\w+\.)?(?:{_NULLABLE_LOC_COLS})\s+IS\s+NOT\s+NULL\b",
+        "",
+        sql, flags=re.IGNORECASE,
+    )
+
+    # ── Step 1.6: Prune redundant family JOIN ────────────────────────────────
+    # The LLM sometimes joins the family table when it retrieves family_id context,
+    # but does not reference any family columns in SELECT, WHERE, or other clauses.
+    if "family" in sql.lower():
+        family_join_pat = re.compile(
+            r"\b(?:INNER\s+|LEFT\s+|RIGHT\s+|CROSS\s+)?JOIN\s+family\s*(?:\s+(?:AS\s+)?(\w+))?\s+ON\s+([\w.]+)\s*=\s*([\w.]+)",
+            re.IGNORECASE
+        )
+        match = family_join_pat.search(sql)
+        if match:
+            alias = match.group(1)
+            identifier = alias if alias else "family"
+            start, end = match.span()
+            rest_of_sql = sql[:start] + sql[end:]
+            
+            # Check if the identifier is referenced with a dot prefix elsewhere
+            has_qualifier_ref = re.search(rf"\b{re.escape(identifier)}\.", rest_of_sql, re.IGNORECASE) is not None
+            
+            # Check if any non-join columns of the family table are referenced as standalone words
+            _FAMILY_COLUMNS = {
+                "jan_aadhaar_number", "family_head_name", "district", "city",
+                "block", "gram_panchayat", "village", "ward", "is_rural"
+            }
+            has_column_ref = False
+            for col in _FAMILY_COLUMNS:
+                if re.search(rf"\b{col}\b", rest_of_sql, re.IGNORECASE):
+                    has_column_ref = True
+                    break
+            
+            if not has_qualifier_ref and not has_column_ref:
+                # The join is completely unused! Strip it.
+                sql = rest_of_sql
+                # Clean up spacing around the removed JOIN
+                sql = re.sub(r"\s+", " ", sql).strip()
+                if sql.endswith("; ") or sql.endswith(";"):
+                    sql = sql.rstrip("; ").rstrip(";") + ";"
 
     # ── Step 2: bank_name → UPPER(col) LIKE '%UPPER_VAL%' ───────────────────
     # Bank names are stored inconsistently (UPPER, Title, mixed) in real data.
@@ -314,6 +497,67 @@ def _post_process_sql(sql: str) -> str:
         sql, flags=re.IGNORECASE,
     )
 
+    # ── Step 16: Normalize bank account number column names ───────────────────
+    sql = re.sub(r"\bbank_account_number\b", "bank_account", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"\bbank_account_no\b", "bank_account", sql, flags=re.IGNORECASE)
+
+    # ── Step 17: Clean up trailing commentary/notes ──────────────────────────
+    if ";" in sql:
+        parts = sql.split(";", 1)
+        sql = parts[0].strip() + ";"
+
+    # ── Step 18: Transitively inject family/member JOINs if referenced but missing ──
+    member_alias = table_to_alias.get("member", "member")
+    family_alias = table_to_alias.get("family")
+    has_family_ref = re.search(r"\b(?:family|f)\.\w+\b", sql, re.IGNORECASE) is not None
+    has_family_join = re.search(r"\b(?:JOIN|FROM)\s+family\b", sql, re.IGNORECASE) is not None
+    if has_family_ref and not has_family_join:
+        f_alias = family_alias if family_alias else "f"
+        join_str = f" JOIN family {f_alias} ON {member_alias}.family_id = {f_alias}.family_id"
+        where_match = re.search(r"\b(WHERE|GROUP\s+BY|ORDER\s+BY|LIMIT)\b", sql, re.IGNORECASE)
+        if where_match:
+            start = where_match.start()
+            sql = sql[:start] + join_str + " " + sql[start:]
+            table_to_alias["family"] = f_alias
+            alias_to_table[f_alias.lower()] = "family"
+        else:
+            sql = sql.rstrip(";") + join_str + ";"
+
+    has_member_ref = re.search(r"\b(?:member|m)\.\w+\b", sql, re.IGNORECASE) is not None
+    has_member_join = re.search(r"\b(?:JOIN|FROM)\s+member\b", sql, re.IGNORECASE) is not None
+    if has_member_ref and not has_member_join:
+        m_alias = member_alias if member_alias else "m"
+        if "family" in sql.lower():
+            f_alias = table_to_alias.get("family", "family")
+            join_str = f" JOIN member {m_alias} ON {m_alias}.family_id = {f_alias}.family_id"
+        elif "bank_details" in sql.lower():
+            b_alias = table_to_alias.get("bank_details", "bank_details")
+            join_str = f" JOIN member {m_alias} ON {b_alias}.member_id = {m_alias}.member_id"
+        else:
+            join_str = ""
+        if join_str:
+            where_match = re.search(r"\b(WHERE|GROUP\s+BY|ORDER\s+BY|LIMIT)\b", sql, re.IGNORECASE)
+            if where_match:
+                start = where_match.start()
+                sql = sql[:start] + join_str + " " + sql[start:]
+                table_to_alias["member"] = m_alias
+                alias_to_table[m_alias.lower()] = "member"
+            else:
+                sql = sql.rstrip(";") + join_str + ";"
+
+    # ── Step 19: Re-run prefix correction to handle any injected tables ───────
+    alias_to_table.clear()
+    table_to_alias.clear()
+    for table_name in ["member", "family", "bank_details"]:
+        match = re.search(rf"\b{table_name}\s+(?:AS\s+)?(\w+)\b", sql, re.IGNORECASE)
+        if match:
+            alias = match.group(1)
+            if alias.upper() not in {"JOIN", "ON", "WHERE", "GROUP", "ORDER", "LIMIT", "SELECT", "FROM", "INNER", "LEFT", "RIGHT", "CROSS", "OUTER", "NATURAL", "AS"}:
+                alias_to_table[alias.lower()] = table_name
+                table_to_alias[table_name] = alias
+
+    sql = re.sub(r"\b(\w+)\.(\w+)\b", prefix_replacer, sql)
+
     return sql
 
 
@@ -403,6 +647,17 @@ def generate_sql_pipeline(
     generator = OllamaSqlGenerator()
     validator = SQLValidator()
 
+    # Fuzzy intent detection
+    from normalization.fuzzy_match import is_fuzzy_intent, extract_fuzzy_target
+    is_fuzzy = is_fuzzy_intent(question)
+    fuzzy_target = None
+    if is_fuzzy:
+        target = extract_fuzzy_target(question)
+        if target and len(target) >= 3:
+            fuzzy_target = target
+        else:
+            is_fuzzy = False
+
     previous_error: str | None = None
     sql = ""
     validation_errors: list[str] = []
@@ -410,7 +665,7 @@ def generate_sql_pipeline(
     for _ in range(settings.max_retries):
         prompt = prompt_builder.build(retrieval, previous_error=previous_error)
         sql = generator.generate(prompt)
-        sql = _post_process_sql(sql)
+        sql = _post_process_sql(sql, fuzzy_target=fuzzy_target)
         sql = _fix_no_bank_sql(sql, question)   # handles unbanked / no-account queries
         validation = validator.validate(
             sql,
@@ -439,7 +694,10 @@ def generate_sql_pipeline(
         confidence=retrieval.confidence,
         validation_errors=validation_errors,
         optimization=optimization,
+        is_fuzzy=is_fuzzy,
+        fuzzy_target=fuzzy_target,
     )
+
 
 
 def run_cli() -> None:
@@ -454,15 +712,14 @@ def run_cli() -> None:
     args = parser.parse_args()
 
     if args.seed_demo_db:
-        seed_demo_data()
-        print(f"Demo database ready at {settings.sqlite_path}")
+        import_excel_dataset("dummy_dataset/Dummy_Data_Set.xlsx")
+        print(f"Demo database ready at {settings.sqlite_path} loaded from Dummy_Data_Set.xlsx")
     if args.import_excel:
         report = import_excel_dataset(args.import_excel)
         print(
             f"Imported {report.members_loaded} members, {report.families_loaded} family records, "
             f"and {report.bank_records_loaded} bank records from {report.source_name}."
         )
-        print("This workbook has no scheme benefit or verification fields; those local tables are empty.")
 
     manager = OllamaModelManager()
     manager.ensure_model(settings.sql_model)
@@ -496,11 +753,22 @@ def run_cli() -> None:
         print("\nValidation errors")
         print("; ".join(output.validation_errors))
     if args.show_results and output.sql:
-        preview = execute_select_preview(output.sql, max_rows=20)
-        print("\nMatching entries")
+        preview = execute_select_preview(
+            output.sql,
+            max_rows=20,
+            fuzzy_target=output.fuzzy_target,
+            is_fuzzy=output.is_fuzzy,
+        )
+        if output.is_fuzzy:
+            print(f"\nSimilarity matches for '{output.fuzzy_target}' (Jaro-Winkler >= 0.80)")
+        else:
+            print("\nMatching entries")
         print(preview.rows.to_string(index=False) if not preview.rows.empty else "No matching entries.")
         if preview.truncated:
-            print("Showing the first 20 rows only.")
+            if output.is_fuzzy:
+                print("Showing the first 20 similarity matches only.")
+            else:
+                print("Showing the first 20 rows only.")
     if output.optimization:
         print("\nExecution plan")
         print("\n".join(output.optimization.execution_plan))

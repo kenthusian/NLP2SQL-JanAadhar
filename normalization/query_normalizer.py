@@ -12,8 +12,6 @@ COMMON_CANONICAL_TERMS = {
     "boy": ["boy", "boys", "male", "man", "men"],
     "girl": ["girl", "girls", "female", "woman", "women"],
     "beneficiary": ["beneficiary", "beneficiaries"],
-    "pension": ["pension"],
-    "ekyc": ["ekyc", "kyc", "e-kyc"],
     "aadhaar": ["aadhaar", "adhar", "aadhar"],
     "caste": ["caste", "cast"],
     "district": ["district", "zilla"],
@@ -40,8 +38,6 @@ DIRECT_CORRECTIONS = {
     "benificiary": "beneficiary",
     "benificiaries": "beneficiaries",
     "beneficary": "beneficiary",
-    "pensoin": "pension",
-    "pention": "pension",
     "distict": "district",
     "distrct": "district",
     "jaipor": "Jaipur",
@@ -69,19 +65,27 @@ class QueryNormalizer:
     def normalize(self, query: str) -> QueryNormalizationResult:
         corrections: dict[str, str] = {}
         
-        # 1. Identify and protect proper nouns (following prepositions or in quotes)
-        prepositions = {"in", "from", "at", "named", "called", "of"}
+        # 1. Identify and protect proper nouns based on context
+        location_prepositions = {"in", "from", "at", "of", "to"}
+        person_prepositions = {"named", "called"}
+        
         words = re.findall(r"\b[a-zA-Z0-9]+\b", query)
-        protected_words = set()
+        location_protected = set()
+        person_protected = set()
         
         for i in range(1, len(words)):
-            if words[i-1].lower() in prepositions:
-                protected_words.add(words[i].lower())
+            prep = words[i-1].lower()
+            if prep in location_prepositions:
+                location_protected.add(words[i].lower())
+            elif prep in person_prepositions:
+                person_protected.add(words[i].lower())
                 
-        # Protect words inside single/double quotes
+        # Protect words inside single/double quotes (unless they are already location-protected)
         for quoted in re.findall(r"['\"]([^'\"]+)['\"]", query):
             for word in re.findall(r"\b[a-zA-Z0-9]+\b", quoted):
-                protected_words.add(word.lower())
+                word_lower = word.lower()
+                if word_lower not in location_protected:
+                    person_protected.add(word_lower)
 
         def replace(match: re.Match[str]) -> str:
             token = match.group(0)
@@ -96,9 +100,14 @@ class QueryNormalizer:
                 return replacement
 
             # Protect proper nouns, unless they are explicitly in direct corrections
-            is_protected = (lowered in protected_words)
+            is_location_protected = (lowered in location_protected)
+            is_person_protected = (lowered in person_protected)
+            is_protected = is_location_protected or is_person_protected
+            
             if is_protected and lowered in DIRECT_CORRECTIONS:
                 is_protected = False
+                is_location_protected = False
+                is_person_protected = False
                 
             if lowered in DIRECT_CORRECTIONS:
                 replacement = DIRECT_CORRECTIONS[lowered]
@@ -120,9 +129,16 @@ class QueryNormalizer:
             if score < self.threshold:
                 return token
                 
-            # If the token is protected and it is not an extremely high confidence match, skip it
-            if is_protected and score < 95:
+            # If the token is person-protected (or in quotes) and it is not an extremely high confidence match, skip it.
+            # If it is location-protected, we allow the lower default threshold (self.threshold) if it maps to a district,
+            # but keep the 95 threshold if it maps to a non-district candidate.
+            if is_person_protected and score < 95:
                 return token
+                
+            if is_location_protected and score < 95:
+                is_district = (self.correction_candidates[matched] in RAJASTHAN_DISTRICTS_41)
+                if not is_district:
+                    return token
                 
             replacement = self.correction_candidates[matched]
             if replacement.lower() == lowered:
@@ -156,8 +172,6 @@ class QueryNormalizer:
             "male": "male",
             "beneficiary": "beneficiary",
             "beneficiaries": "beneficiaries",
-            "pension": "pension",
-            "ekyc": "ekyc",
             "aadhaar": "aadhaar",
             "caste": "caste",
             "district": "district",

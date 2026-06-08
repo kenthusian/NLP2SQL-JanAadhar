@@ -1,7 +1,7 @@
 from database.schema_metadata import COLUMNS, ColumnMeta, RAJASTHAN_DISTRICTS_41, RELATIONSHIPS
 
 
-def test_pension_and_geography_metadata_exist():
+def test_basic_metadata_exists():
     names = {column.qualified_name for column in COLUMNS}
     assert "bank_details.bank_name" in names
     assert "family.district" in names

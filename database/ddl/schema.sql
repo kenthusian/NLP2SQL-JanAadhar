@@ -52,29 +52,5 @@ CREATE TABLE bank_details (
     ifsc_code VARCHAR(16) NOT NULL,
     dbt_status VARCHAR(24) NOT NULL
 );
-
-CREATE TABLE scheme_benefits (
-    scheme_benefit_id INTEGER PRIMARY KEY,
-    member_id INTEGER NOT NULL REFERENCES member(member_id),
-    scheme_name VARCHAR(120) NOT NULL,
-    bpl_status VARCHAR(16),
-    apl_status VARCHAR(16),
-    nfsa_status VARCHAR(24),
-    pension_eligibility VARCHAR(24),
-    beneficiary_status VARCHAR(24),
-    benefit_amount INTEGER
-);
-
-CREATE TABLE verification (
-    verification_id INTEGER PRIMARY KEY,
-    member_id INTEGER NOT NULL UNIQUE REFERENCES member(member_id),
-    ekyc_status VARCHAR(24) NOT NULL,
-    aadhaar_seeding_status VARCHAR(24) NOT NULL,
-    jan_aadhaar_status VARCHAR(24) NOT NULL,
-    last_updated_date DATE
-);
-
 CREATE INDEX ix_family_geo ON family(district, block, gram_panchayat, village);
 CREATE INDEX ix_member_gender_caste_age ON member(gender, caste_category, age);
-CREATE INDEX ix_scheme_pension_beneficiary ON scheme_benefits(pension_eligibility, beneficiary_status);
-CREATE INDEX ix_verification_ekyc_aadhaar ON verification(ekyc_status, aadhaar_seeding_status);

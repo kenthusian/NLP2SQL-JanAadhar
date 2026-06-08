@@ -5,7 +5,6 @@ import streamlit as st
 from app import generate_sql_pipeline
 from database.excel_importer import import_excel_dataset
 from database.query_results import execute_select_preview
-from database.sample_data import seed_demo_data
 from embeddings.faiss_store import FaissSchemaStore
 
 
@@ -19,9 +18,14 @@ def render() -> None:
         run_profile = st.checkbox("Execute generated query for timing", value=False)
         show_results = st.checkbox("Show matching entries", value=True)
         result_limit = st.number_input("Maximum displayed rows", min_value=10, max_value=1000, value=200, step=10)
-        if st.button("Seed demo database"):
-            seed_demo_data()
-            st.success("Demo database is ready.")
+        if st.button("Load default dummy dataset"):
+            with st.spinner("Loading records from Dummy_Data_Set.xlsx..."):
+                try:
+                    import_excel_dataset("dummy_dataset/Dummy_Data_Set.xlsx")
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("Demo database is ready using Dummy_Data_Set.xlsx.")
         uploaded_data = st.file_uploader("Import dummy Excel dataset", type=["xlsx"])
         if uploaded_data is not None and st.button("Load uploaded dataset"):
             with st.spinner("Loading records into the local SQLite database..."):
@@ -31,7 +35,6 @@ def render() -> None:
                     st.error(str(exc))
                 else:
                     st.success(f"Loaded {report.members_loaded} citizen records.")
-                    st.caption("No welfare or verification fields exist in this workbook; those tables remain empty.")
         if st.button("Rebuild schema index"):
             with st.spinner("Embedding schema metadata with Ollama and rebuilding FAISS..."):
                 FaissSchemaStore().build(force=True)
@@ -81,9 +84,18 @@ def render() -> None:
             st.error("; ".join(output.validation_errors))
 
         if show_results and output.sql:
-            st.subheader("Matching Entries")
+            if output.is_fuzzy:
+                st.subheader(f"Similarity Matches for '{output.fuzzy_target}'")
+                st.info(f"Showing results filtered by Jaro-Winkler similarity >= 0.80, sorted descending.")
+            else:
+                st.subheader("Matching Entries")
             try:
-                preview = execute_select_preview(output.sql, max_rows=int(result_limit))
+                preview = execute_select_preview(
+                    output.sql,
+                    max_rows=int(result_limit),
+                    fuzzy_target=output.fuzzy_target,
+                    is_fuzzy=output.is_fuzzy,
+                )
             except Exception as exc:
                 st.error(f"Results could not be displayed: {exc}")
             else:
@@ -91,10 +103,16 @@ def render() -> None:
                     st.info("The query returned no matching entries in the currently loaded dataset.")
                 else:
                     st.dataframe(preview.rows, width="stretch", hide_index=True)
-                    st.caption(
-                        f"Showing {preview.displayed_rows} matching row(s)"
-                        + ("; more rows exist." if preview.truncated else ".")
-                    )
+                    if output.is_fuzzy:
+                        st.caption(
+                            f"Showing {preview.displayed_rows} similarity match(es)"
+                            + ("; more candidate rows exist in the database." if preview.truncated else ".")
+                        )
+                    else:
+                        st.caption(
+                            f"Showing {preview.displayed_rows} matching row(s)"
+                            + ("; more rows exist." if preview.truncated else ".")
+                        )
                     st.download_button(
                         "Download displayed results as CSV",
                         data=preview.rows.to_csv(index=False).encode("utf-8"),

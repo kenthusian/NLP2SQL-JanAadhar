@@ -16,7 +16,7 @@ CASTE_CATEGORY_TERMS = {"category", "sc", "st", "obc", "general", "gen", "schedu
 # Combined for backward-compat where either column is relevant
 CASTE_TERMS = CASTE_DETAIL_TERMS | CASTE_CATEGORY_TERMS
 
-WELFARE_TERMS = {"pension", "beneficiary", "beneficiaries", "benefit", "scheme", "nfsa", "bpl", "apl", "ration"}
+WELFARE_TERMS = {"beneficiary", "beneficiaries"}
 BANK_TERMS = {
     "bank", "account", "ifsc", "dbt", "payment",
     # Common bank abbreviations used in queries
@@ -232,26 +232,26 @@ def _prune_columns(columns: set[str], question_lower: str, question_terms: set[s
         table, column = qualified_name.split(".")
         if not _column_allowed_by_domain(qualified_name, question_lower, question_terms):
             continue
-        if table == "bank_details" and not (BANK_TERMS & question_terms):
+        if table == "bank_details" and not (BANK_TERMS & question_terms or any(term in question_lower for term in BANK_TERMS)):
             continue
         if qualified_name in {
             "member.jan_aadhaar_member_id",
             "member.mobile_number",
-        } and not (IDENTITY_TERMS & question_terms):
+        } and not (IDENTITY_TERMS & question_terms or any(term in question_lower for term in IDENTITY_TERMS)):
             continue
-        if qualified_name in {"family.jan_aadhaar_number"} and not ((IDENTITY_TERMS | WELFARE_TERMS) & question_terms):
+        if qualified_name in {"family.jan_aadhaar_number"} and not ((IDENTITY_TERMS | WELFARE_TERMS) & question_terms or any(term in question_lower for term in (IDENTITY_TERMS | WELFARE_TERMS))):
             continue
-        if qualified_name == "family.block" and not ({"block", "tehsil", "kotputli"} & question_terms or non_district_loc):
+        if qualified_name == "family.block" and not ({"block", "tehsil", "kotputli"} & question_terms or "block" in question_lower or "tehsil" in question_lower or "kotputli" in question_lower or non_district_loc):
             continue
-        if qualified_name == "family.gram_panchayat" and not {"gram", "panchayat", "gp"} & question_terms:
+        if qualified_name == "family.gram_panchayat" and not ({"gram", "panchayat", "gp"} & question_terms or "gram" in question_lower or "panchayat" in question_lower or "gp" in question_lower):
             continue
-        if qualified_name == "family.village" and not ("village" in question_terms or non_district_loc):
+        if qualified_name == "family.village" and not ("village" in question_terms or "village" in question_lower or non_district_loc):
             continue
-        if qualified_name == "family.ward" and "ward" not in question_terms:
+        if qualified_name == "family.ward" and not ("ward" in question_terms or "ward" in question_lower):
             continue
-        if qualified_name == "family.city" and not {"city", "town", "urban"} & question_terms:
+        if qualified_name == "family.city" and not ({"city", "town", "urban"} & question_terms or "city" in question_lower or "town" in question_lower or "urban" in question_lower):
             continue
-        if qualified_name == "family.district" and not ((DISTRICT_TERMS | GEOGRAPHY_TERMS) & question_terms or possible_location):
+        if qualified_name == "family.district" and not ((DISTRICT_TERMS | GEOGRAPHY_TERMS) & question_terms or any(term in question_lower for term in (DISTRICT_TERMS | GEOGRAPHY_TERMS)) or possible_location):
             continue
         if qualified_name == "family.is_rural" and not (RURAL_TERMS & question_terms or any(t in question_lower for t in ("rural", "urban", "is_rural"))):
             continue

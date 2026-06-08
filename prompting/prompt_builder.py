@@ -131,8 +131,9 @@ class PromptBuilder:
                 "- caste column filtering:\n"
                 "  * Numbers have been removed during import — search for 'Jat' not '58 Jat'.\n"
                 "  * Casing is inconsistent across records — always use LIKE for caste searches.\n"
-                "  * The same caste may appear in Hindi and English — use IN or multiple LIKE conditions:\n"
-                "    member.caste IN ('Rajput', 'RAJPOOT', 'Rajpoot') OR use member.caste LIKE '%Rajput%'.\n"
+                "  * Always use a simple single-word LIKE filter for caste searches (e.g. member.caste LIKE '%Rajput%').\n"
+                "    Do NOT use IN lists or multiple OR conditions for spellings/languages, as a post-processor\n"
+                "    will automatically expand it to search in both English and Hindi.\n"
                 "  * CRITICAL: If the question mentions a specific caste name (e.g., Fakir, Jat, Rajput, Brahman),\n"
                 "    filter ONLY on member.caste using LIKE. Do NOT add a caste_category filter — you have no\n"
                 "    information about which category that caste belongs to unless the question explicitly states it."
@@ -142,8 +143,7 @@ class PromptBuilder:
             dynamic_rules.append(
                 "- bank_name filtering: Bank names are stored inconsistently (UPPER, Title, mixed case). "
                 "Always use UPPER(bank_name) LIKE '%SEARCH_TERM_IN_UPPER%'. "
-                "Example: UPPER(bank_name) LIKE '%STATE BANK%' matches 'STATE BANK OF INDIA', 'State Bank of India', etc. "
-                "If filtering by district too, JOIN the family table."
+                "Example: UPPER(bank_name) LIKE '%STATE BANK%' matches 'STATE BANK OF INDIA', 'State Bank of India', etc."
             )
 
         # Prompt rule for unbanked / no-bank-account queries
@@ -194,9 +194,12 @@ Every selected column, WHERE column, JOIN column, GROUP BY column, and ORDER BY 
 If a desired field is not listed in Relevant columns, do not use it.
 If the question asks for "all" records, return identifying columns from Relevant columns, not SELECT *.
 Avoid SELECT *; select explicit columns.
-Never include family_id (family.family_id, member.family_id) or bank_id in the SELECT clause; they are internal surrogate database keys and are meaningless to the user. Use them ONLY inside JOIN conditions.
+Never include family_id (family.family_id, member.family_id) or bank_id in the SELECT clause unless it is used in a GROUP BY for member count aggregation; they are internal surrogate keys meaningless to the user. Use them only in JOIN conditions or GROUP BY clauses.
 Use joins only when required by the question.
+TRANSITIVE JOIN RULE: You can only JOIN tables that have an allowed relationship listed below. Never join tables directly if there is no declared relationship between them; join them transitively through intermediate tables. For example, to join family and bank_details, you must join member in between: family JOIN member ON member.family_id = family.family_id JOIN bank_details ON bank_details.member_id = member.member_id.
+MULTIPLE TABLE JOIN RULE: If columns from family, member, and bank_details are all listed in Relevant columns, you MUST join all three tables together in your query using the allowed relationships. Do not try to reference family columns (like district) or member columns (like gender) or bank_details columns (like bank_name) without joining their respective tables.
 Prefer indexed columns in predicates where applicable.
+CRITICAL COLUMN PREFIX RULE: Demographic columns (member_name, gender, age, income, caste, caste_category, marital_status, minority, occupation, education) ALWAYS belong to the 'member' table. NEVER prefix them with 'bank_details.' or 'family.' (e.g. use member.member_name, member.gender, member.income, NOT bank_details.member_name, bank_details.gender, family.gender). Geography columns (district, block, village, gram_panchayat, city, ward, is_rural) ALWAYS belong to the 'family' table. Bank identifiers (bank_name, bank_account, ifsc_code) ALWAYS belong to the 'bank_details' table.
 Generate {dialect_desc}-compatible SQL.
 CRITICAL NAME FILTERING RULE: When filtering by any person name column (member.member_name, father_name, mother_name, spouse_name, or family_head_name), ALWAYS use LIKE with wildcards (e.g., member.member_name LIKE '%Vijay%'). NEVER use exact '=' for name searches — database entries are full names with surnames and will fail exact matches.
 Interpret common wording precisely:
@@ -204,7 +207,8 @@ Interpret common wording precisely:
 - girl or girls means member.gender = 'Female'.
 - man or men means member.gender = 'Male'.
 - woman or women or ladies means member.gender = 'Female'.
-- widow or widows or widowed means member.marital_status = 'Widow'.
+- widow or widows or widowed means member.marital_status = 'Widow' AND member.gender = 'Female'.
+- widower or widowers means member.marital_status = 'Widow' AND member.gender = 'Male'.
 - unmarried or single means member.marital_status = 'Unmarried'.
 - family head or HOF means member.member_type = 'HOF' (always female; relation_with_hof = 'Self').
 - husband of the family means member.relation_with_hof = 'Husband'.

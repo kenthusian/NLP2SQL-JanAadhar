@@ -104,10 +104,18 @@ class SQLValidator:
         errors.extend(join_errors)
 
         # Verbose terminal logging to help identify any issues under Streamlit or CLI runs
-        print(f"[SQLValidator DEBUG] sql: {sql}")
-        print(f"[SQLValidator DEBUG] referenced_tables: {referenced_tables}")
-        print(f"[SQLValidator DEBUG] allowed_columns: {allowed_columns}")
-        print(f"[SQLValidator DEBUG] validation result errors: {errors}")
+        import sys
+        def safe_print(msg: str):
+            try:
+                print(msg)
+            except UnicodeEncodeError:
+                enc = sys.stdout.encoding or 'utf-8'
+                print(msg.encode(enc, errors='replace').decode(enc))
+
+        safe_print(f"[SQLValidator DEBUG] sql: {sql}")
+        safe_print(f"[SQLValidator DEBUG] referenced_tables: {referenced_tables}")
+        safe_print(f"[SQLValidator DEBUG] allowed_columns: {allowed_columns}")
+        safe_print(f"[SQLValidator DEBUG] validation result errors: {errors}")
 
         return ValidationResult(valid=not errors, errors=errors)
 
@@ -134,7 +142,7 @@ class SQLValidator:
         unknown: set[str] = set()
         for table, column in re.findall(r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b", sql):
             resolved_table = alias_map.get(table, table)
-            if resolved_table in self.tables and column not in self.columns.get(resolved_table, set()):
+            if resolved_table not in self.tables or column not in self.columns.get(resolved_table, set()):
                 unknown.add(f"{resolved_table}.{column}")
         if len(referenced_tables) == 1:
             table = next(iter(referenced_tables))

@@ -65,3 +65,70 @@ def test_post_process_sql_rewrites_name_equals():
     assert "district = 'Sawai Madhopur'" in processed_dist
 
 
+def test_post_process_sql_prunes_unused_family_join():
+    from app import _post_process_sql
+    
+    # Unused family join should be pruned
+    sql = (
+        "SELECT DISTINCT member.member_name "
+        "FROM member INNER JOIN family ON member.family_id = family.family_id "
+        "WHERE member.caste LIKE '%Jat%' AND member.marital_status = 'Widow' AND member.age > 21;"
+    )
+    processed = _post_process_sql(sql)
+    assert "JOIN family" not in processed
+    assert "family.family_id" not in processed
+    assert "member.family_id = family.family_id" not in processed
+    assert "FROM member WHERE (member.caste LIKE" in processed
+
+    # Used family join (by alias) should NOT be pruned
+    sql_used_alias = (
+        "SELECT DISTINCT member.member_name "
+        "FROM member INNER JOIN family F ON member.family_id = F.family_id "
+        "WHERE F.district = 'Jaipur';"
+    )
+    processed_used_alias = _post_process_sql(sql_used_alias)
+    assert "JOIN family" in processed_used_alias or "JOIN family F" in processed_used_alias
+
+    # Used family join (no alias) should NOT be pruned
+    sql_used_no_alias = (
+        "SELECT DISTINCT member.member_name "
+        "FROM member INNER JOIN family ON member.family_id = family.family_id "
+        "WHERE family.district = 'Jaipur';"
+    )
+    processed_used_no_alias = _post_process_sql(sql_used_no_alias)
+    assert "JOIN family" in processed_used_no_alias
+
+
+def test_post_process_caste_bilingual_expansion():
+    from app import _post_process_sql
+
+    # Test LIKE-based expansion
+    sql1 = "SELECT * FROM member WHERE member.caste LIKE '%Rajput%';"
+    processed1 = _post_process_sql(sql1)
+    assert "member.caste LIKE '%Rajput%'" in processed1
+    assert "member.caste LIKE '%Rajpoot%'" in processed1
+    assert "member.caste LIKE '%राजपूत%'" in processed1
+
+    # Test equals-based expansion (which gets rewritten to LIKE, then expanded)
+    sql2 = "SELECT * FROM member WHERE member.caste = 'Rajput';"
+    processed2 = _post_process_sql(sql2)
+    assert "member.caste LIKE '%Rajput%'" in processed2
+    assert "member.caste LIKE '%Rajpoot%'" in processed2
+    assert "member.caste LIKE '%राजपूत%'" in processed2
+
+    # Test IN-based expansion
+    sql3 = "SELECT * FROM member WHERE member.caste IN ('Rajput', 'RAJPOOT');"
+    processed3 = _post_process_sql(sql3)
+    assert "member.caste LIKE '%Rajput%'" in processed3
+    assert "member.caste LIKE '%Rajpoot%'" in processed3
+    assert "member.caste LIKE '%राजपूत%'" in processed3
+
+    # Test another caste (e.g. Agarwal/Agrawal)
+    sql4 = "SELECT * FROM member WHERE member.caste = 'Agarwal';"
+    processed4 = _post_process_sql(sql4)
+    assert "member.caste LIKE '%Agarwal%'" in processed4
+    assert "member.caste LIKE '%Agrawal%'" in processed4
+    assert "member.caste LIKE '%अग्रवाल%'" in processed4
+
+
+

@@ -234,7 +234,7 @@ class SchemaRelationshipDiagram(Flowable):
     def __init__(self, width: float):
         super().__init__()
         self.width = width
-        self.height = 7.3 * cm
+        self.height = 4.2 * cm
 
     def wrap(self, available_width, available_height):
         return self.width, self.height
@@ -242,13 +242,11 @@ class SchemaRelationshipDiagram(Flowable):
     def draw(self):
         canvas = self.canv
         main_x = self.width / 2 - 2.2 * cm
-        main_y = 2.6 * cm
+        main_y = 0.2 * cm
         self._box(main_x, main_y, 4.4 * cm, 1.55 * cm, "member", "member_id, family_id, demographics", "#196b75")
         positions = [
-            (0.2 * cm, 5.2 * cm, "family", "family_id, district, village"),
-            (self.width - 5.0 * cm, 5.2 * cm, "bank_details", "member_id, dbt_status"),
-            (0.2 * cm, 0.15 * cm, "scheme_benefits", "member_id, pension, NFSA"),
-            (self.width - 5.0 * cm, 0.15 * cm, "verification", "member_id, eKYC"),
+            (0.2 * cm, 2.2 * cm, "family", "family_id, district, village"),
+            (self.width - 5.0 * cm, 2.2 * cm, "bank_details", "member_id, dbt_status"),
         ]
         centers = []
         for x, y, title, sub in positions:
@@ -321,10 +319,10 @@ def build_story() -> list:
             p(
                 "This project lets a user ask database questions in ordinary language and receive a SQL query. "
                 "It is designed around a Jan Aadhaar-style relational database containing family, citizen member, "
-                "welfare, banking, and verification information."
+                "and banking information."
             ),
             p(
-                "A question such as <b>Show all female beneficiaries receiving pension in Jaipur district</b> is "
+                "A question such as <b>Show all female bank account holders in Jaipur district</b> is "
                 "translated into a query that joins only the necessary tables and uses only the required columns."
             ),
             h2("The Core Design Constraint"),
@@ -460,8 +458,7 @@ Relationship:
 """
             ),
             p(
-                "Columns such as <b>member.caste_category</b>, <b>verification.ekyc_status</b>, and "
-                "<b>scheme_benefits.pension_eligibility</b> are withheld unless the question actually requests "
+                "Columns such as <b>member.caste_category</b> or bank detail columns are withheld unless the question actually requests "
                 "those subjects. This reduces prompt size and decreases hallucination opportunities."
             ),
             h2("Why the Architecture Is Hybrid"),
@@ -490,7 +487,7 @@ Relationship:
                     ["femail", "female", "Known typo correction"],
                     ["benificiaries", "beneficiaries", "Known typo correction"],
                     ["jaipor", "Jaipur", "District typo correction"],
-                    ["female beneficiaries receiving pension", "unchanged", "Valid text must not be rewritten"],
+                    ["female bank account holders", "unchanged", "Valid text must not be rewritten"],
                 ],
                 [4.3 * cm, 5.2 * cm, 6.1 * cm],
             ),
@@ -539,9 +536,7 @@ ColumnMeta(
                 [
                     ["family", "Household and geographic location", "family_id, district, block, village, jan_aadhaar_number"],
                     ["member", "Citizen demographic and identity profile", "member_id, family_id, member_name, age, gender, caste_category"],
-                    ["scheme_benefits", "Welfare eligibility and benefit states", "member_id, nfsa_status, pension_eligibility, beneficiary_status"],
-                    ["bank_details", "DBT and banking information", "member_id, dbt_status, ifsc_code"],
-                    ["verification", "eKYC and seeding states", "member_id, ekyc_status, aadhaar_seeding_status"],
+                    ["bank_details", "DBT and banking information", "member_id, bank_account, bank_name, ifsc_code"],
                 ],
                 [3.0 * cm, 5.0 * cm, 7.6 * cm],
             ),
@@ -550,15 +545,8 @@ ColumnMeta(
                 """
 member.family_id          = family.family_id
 bank_details.member_id    = member.member_id
-scheme_benefits.member_id = member.member_id
-verification.member_id    = member.member_id
 """
             ),
-            h2("Indexes in the Demo Schema"),
-            bullet("<b>ix_family_geo</b>: district, block, gram_panchayat, village."),
-            bullet("<b>ix_member_gender_caste_age</b>: gender, caste_category, age."),
-            bullet("<b>ix_scheme_pension_beneficiary</b>: pension_eligibility, beneficiary_status."),
-            bullet("<b>ix_verification_ekyc_aadhaar</b>: ekyc_status, aadhaar_seeding_status."),
             p(
                 "The demo SQLite database is for functionality demonstrations. At production citizen scale, a "
                 "server-grade RDBMS or warehouse would replace SQLite while preserving the metadata/retrieval layer."
@@ -757,7 +745,7 @@ WHERE member.gender = 'Male'
             code(
                 """
 python app.py "All boys above 21 in Jaipur"
-python app.py --seed-demo-db --build-index "Show pension beneficiaries in Jaipur"
+python app.py --seed-demo-db --build-index "Show bank account holders in Jaipur"
 """
             ),
             h2("When to Rebuild the FAISS Index"),
