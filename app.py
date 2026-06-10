@@ -26,13 +26,6 @@ from validation.sql_validator import SQLValidator
 from caching.semantic_cache import SemanticCache
 
 
-<<<<<<< HEAD
-# ── District lookups ─────────────────────────────────────────────────────────
-_DISTRICT_LOWER: dict[str, str] = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
-_DISTRICTS_LOWER: set[str]       = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
-_DISTRICT_CANONICAL              = _DISTRICT_LOWER  # alias for clarity
-
-=======
 # ── District / City / Block lookups ─────────────────────────────────────────
 _DISTRICT_LOWER: dict[str, str]  = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
 _DISTRICTS_LOWER: set[str]       = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
@@ -47,8 +40,6 @@ _BLOCKS_LOWER: set[str]          = {b.lower() for b in RAJASTHAN_BLOCKS}
 # All known place names (district + city + block) — anything outside this set
 # is an unknown locality and should be searched across all sub-location cols.
 _ALL_KNOWN_PLACES: set[str] = _DISTRICTS_LOWER | _CITIES_LOWER | _BLOCKS_LOWER
-
->>>>>>> 81f0e8c (Robust location resolver for cities, blocks, and sub-locations, plus fixes for AND-to-OR query parsing)
 # ── No-bank query signals ─────────────────────────────────────────────────────
 _NO_BANK_WORDS = [
     "no bank", "without bank", "don't have", "do not have",
@@ -346,104 +337,7 @@ def _post_process_sql(sql: str, fuzzy_target: str | None = None) -> str:  # noqa
         for table in tree.find_all(exp.Table):
             if table.name.lower() in ("member", "family", "bank_details"):
                 table.set("this", exp.Identifier(this="citizen"))
-<<<<<<< HEAD
 
-        # 2. Strip table-qualifier prefixes (e.g. citizen.age → age)
-        for col in tree.find_all(exp.Column):
-            if col.table:
-                col.set("table", None)
-
-        def _transform(node):
-            if not isinstance(node, (exp.EQ, exp.Like)):
-                return node
-            left, right = node.left, node.right
-            if not isinstance(left, exp.Column):
-                return node
-            col = left.name.lower()
-            if not isinstance(right, exp.Literal) or not right.is_string:
-                return node
-            val = right.name.lower()
-            orig = right.name
-
-            # Gender
-            if col == "gender":
-                if val in ("male", "m", "boy", "boys", "man", "men", "gents",
-                           "ladka", "ladke", "purusha"):
-                    right.set("this", "Male")
-                elif val in ("female", "f", "girl", "girls", "woman", "women",
-                             "ladies", "lady", "ladki", "mahila", "aurat"):
-                    right.set("this", "Female")
-
-            # Caste category
-            elif col == "caste_category":
-                MAP = {
-                    "general": "GEN", "gen": "GEN", "open": "GEN",
-                    "unreserved": "GEN", "forward": "GEN", "ur": "GEN",
-                    "obc": "OBC", "other backward": "OBC",
-                    "sc": "SC", "dalit": "SC", "scheduled caste": "SC",
-                    "st": "ST", "tribal": "ST", "adivasi": "ST",
-                }
-                if val in MAP:
-                    right.set("this", MAP[val])
-
-            # Marital status
-            elif col == "marital_status":
-                if val in ("widowed", "widower"):
-                    right.set("this", "Widow")
-                elif val in ("single", "bachelor", "spinster", "never married"):
-                    right.set("this", "Unmarried")
-
-            # is_rural
-            elif col == "is_rural":
-                if val in ("rural", "true", "yes", "1"):
-                    return exp.EQ(this=left, expression=exp.Literal.number(1))
-                elif val in ("urban", "false", "no", "0"):
-                    return exp.EQ(this=left, expression=exp.Literal.number(0))
-
-            # Education — illiterate is stored lowercase; others use LIKE
-            elif col == "education":
-                if val == "illiterate":
-                    return exp.EQ(
-                        this=exp.Lower(this=left),
-                        expression=exp.Literal.string("illiterate"),
-                    )
-                # Any other exact = rewrite to LIKE
-                stripped = orig.replace("%", "")
-                return exp.Like(
-                    this=left,
-                    expression=exp.Literal.string(f"%{stripped}%"),
-                )
-
-            # bank_name → UPPER(col) LIKE '%UPPER_VAL%'
-            elif col == "bank_name":
-                val_stripped = orig.upper().replace("%", "")
-                return exp.Like(
-                    this=exp.Upper(this=left),
-                    expression=exp.Literal.string(f"%{val_stripped}%"),
-                )
-
-            # District casing
-            elif col == "district":
-                canonical = _DISTRICT_CANONICAL.get(val)
-                if canonical:
-                    right.set("this", canonical)
-
-            # Free-text columns → LIKE
-            elif col in ("caste", "occupation", "member_name", "father_name",
-                         "mother_name", "spouse_name"):
-                if isinstance(node, exp.EQ):
-                    stripped = orig.replace("%", "")
-                    return exp.Like(
-                        this=left,
-                        expression=exp.Literal.string(f"%{stripped}%"),
-                    )
-
-            return node
-
-        tree = tree.transform(_transform)
-        sql = tree.sql(dialect="sqlite") + ";"
-
-=======
 
         # 2. Strip table-qualifier prefixes (e.g. citizen.age → age)
         for col in tree.find_all(exp.Column):

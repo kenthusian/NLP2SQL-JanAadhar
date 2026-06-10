@@ -73,11 +73,11 @@ class SemanticCache:
         if self.index is not None:
             faiss.write_index(self.index, str(self.faiss_path))
 
-    def search(self, question: str) -> Optional[CacheEntry]:
+    def search(self, normalized_question: str) -> Optional[CacheEntry]:
         if self.index is None:
             return None
             
-        vector = self.embedder.embed(question).reshape(1, -1)
+        vector = self.embedder.embed(normalized_question).reshape(1, -1)
         scores, indexes = self.index.search(vector, 1)
         
         if len(scores) > 0 and len(scores[0]) > 0:
