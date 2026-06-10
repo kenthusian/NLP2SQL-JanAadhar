@@ -1,0 +1,8 @@
+
+Q: show all unemployed people
+OCCUPATION ILIKE '%unemployed%'
+LIMIT 500;
+
+Q: show all illiterate people who are unemployed
+OCCUPATION ILIKE '%unemployed%' AND EDUCATION = 'illiterate'
+LIMIT 500;

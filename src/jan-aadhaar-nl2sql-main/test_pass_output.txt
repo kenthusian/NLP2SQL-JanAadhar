@@ -1,0 +1,4 @@
+
+Q: show unmarried female farmers in rural areas who are 8th pass
+EDUCATION ILIKE '%8%' AND (OCCUPATION ILIKE '%farmer%' OR OCCUPATION ILIKE '%agri%') AND IS_RURAL = '1' AND GENDER = 'Female' AND MARITAL_STATUS = 'Unmarried'
+LIMIT 500;

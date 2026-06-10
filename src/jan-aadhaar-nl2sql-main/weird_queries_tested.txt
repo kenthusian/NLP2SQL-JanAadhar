@@ -1,0 +1,41 @@
+=== Weird Queries Test Results ===
+
+Query: show all beople from 2rpm
+Normalized: show all people from 2rpm
+SQL: SELECT NAME_EN, AGE, GENDER, CASTE_CATEGORY, DISTRICT_NAME_ENG, VILL_NAME_ENG, OCCUPATION, INCOME, BANK, MARITAL_STATUS FROM aadhaar WHERE VILL_NAME_ENG ILIKE '%2rpm%' OR DISTRICT_NAME_ENG ILIKE '%2rpm%' LIMIT 500;
+Result: Success (0 rows)
+
+Query: how many famlies have 1 or more than 1 children
+Normalized: how many families have 1 or more than 1 children
+SQL: SELECT COUNT(*) AS total_count FROM ( SELECT ENROLLMENT_ID FROM aadhaar WHERE AGE < 18 GROUP BY ENROLLMENT_ID HAVING COUNT(*) > 1 ) sub;
+Result: Success
+
+Query: shw me all ricch peeple in jaipor
+Normalized: shw me all rich people in Jaipur
+SQL: SELECT NAME_EN, AGE, GENDER, CASTE_CATEGORY, DISTRICT_NAME_ENG, VILL_NAME_ENG, OCCUPATION, INCOME, BANK, MARITAL_STATUS FROM aadhaar WHERE INCOME > 500000 AND DISTRICT_NAME_ENG ILIKE '%Jaipur%' LIMIT 500;
+Result: Success
+
+Query: find all unmarred womens above 50
+Normalized: find all Unmarried women above 50
+SQL: SELECT NAME_EN, AGE, GENDER, CASTE_CATEGORY, DISTRICT_NAME_ENG, VILL_NAME_ENG, OCCUPATION, INCOME, BANK, MARITAL_STATUS FROM aadhaar WHERE MARITAL_STATUS = 'Unmarried' AND GENDER = 'Female' AND AGE > 50 LIMIT 500;
+Result: Success
+
+Query: gimme total count of famers with icome > 1lak
+Normalized: gimme total count of Farmer with income > 1lak
+SQL: SELECT COUNT(*) AS total_members FROM aadhaar WHERE (OCCUPATION ILIKE '%farmer%' OR OCCUPATION ILIKE '%agri%') AND INCOME > 100000;
+Result: Success
+
+Query: details of people named rahul in rural area
+Normalized: details of people named rahul in rural area
+SQL: SELECT NAME_EN, AGE, GENDER, CASTE_CATEGORY, DISTRICT_NAME_ENG, VILL_NAME_ENG, OCCUPATION, INCOME, BANK, MARITAL_STATUS FROM aadhaar WHERE IS_RURAL = '1' AND NAME_EN ILIKE '%rahul%' LIMIT 500;
+Result: Success
+
+Query: who is the oldest person in sbi bank
+Normalized: who is the oldest person in sbi bank
+SQL: SELECT NAME_EN, AGE, GENDER, CASTE_CATEGORY, DISTRICT_NAME_ENG, VILL_NAME_ENG, OCCUPATION, INCOME, BANK, MARITAL_STATUS FROM aadhaar WHERE (BANK ILIKE '%State Bank of India%' OR IFSC_CODE ILIKE 'SBIN%') ORDER BY AGE DESC LIMIT 1;
+Result: Success
+
+Query: smallest famliy
+Normalized: smallest family
+SQL: SELECT ENROLLMENT_ID, COUNT(*) AS member_count FROM aadhaar GROUP BY ENROLLMENT_ID ORDER BY member_count ASC LIMIT 1;
+Result: Success

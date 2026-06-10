@@ -1,0 +1,29 @@
+
+Q: list all unbanked state personnel who are post graduates
+EDUCATION ILIKE '%graduate%' AND EDUCATION ILIKE '%post%graduate%' AND (OCCUPATION ILIKE '%state personnel%' OR OCCUPATION ILIKE '%autonomous%' OR OCCUPATION ILIKE '%psu%') AND (ACCOUNT_NO IS NULL OR ACCOUNT_NO = '' OR BANK IS NULL OR BANK = '')
+LIMIT 500;
+
+Q: count the number of contractual employees with income between 10k and 50k
+SELECT COUNT(*) AS total_members
+FROM aadhaar
+WHERE INCOME BETWEEN 10000 AND 50000 AND OCCUPATION ILIKE '%contract%';
+
+Q: show all widowed women in Jaipur who are self-employed
+(OCCUPATION ILIKE '%self%employed%' OR OCCUPATION ILIKE '%business%') AND GENDER = 'Female' AND MARITAL_STATUS = 'Widow' AND DISTRICT_NAME_ENG = 'Jaipur'
+LIMIT 500;
+
+Q: list all male students without a bank account
+OCCUPATION ILIKE '%student%' AND (ACCOUNT_NO IS NULL OR ACCOUNT_NO = '' OR BANK IS NULL OR BANK = '') AND GENDER = 'Male'
+LIMIT 500;
+
+Q: show members with a bank account in SBI
+(BANK ILIKE '%State Bank of India%' OR IFSC_CODE ILIKE 'SBIN%') AND (ACCOUNT_NO IS NOT NULL AND ACCOUNT_NO != '' AND BANK IS NOT NULL AND BANK != '')
+LIMIT 500;
+
+Q: find divorced men from OBC category
+CASTE_CATEGORY = 'OBC' AND GENDER = 'Male' AND MARITAL_STATUS = 'Divorced'
+LIMIT 500;
+
+Q: find farmers with income above 1 lakh
+INCOME > 100000 AND (OCCUPATION ILIKE '%farmer%' OR OCCUPATION ILIKE '%agri%')
+LIMIT 500;

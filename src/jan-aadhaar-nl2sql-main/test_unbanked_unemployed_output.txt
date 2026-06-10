@@ -1,0 +1,5 @@
+
+Q: count unbanked unemployed state personnel
+SELECT COUNT(*) AS total_members
+FROM aadhaar
+WHERE (OCCUPATION ILIKE '%unemployed%' OR OCCUPATION ILIKE '%state personnel%' OR OCCUPATION ILIKE '%autonomous%' OR OCCUPATION ILIKE '%psu%') AND (ACCOUNT_NO IS NULL OR ACCOUNT_NO = '' OR BANK IS NULL OR BANK = '');
