@@ -87,6 +87,9 @@ def fuzzy_rerank(
         return df
 
     target_lower = target_name.lower()
+    target_words = [w.strip() for w in target_lower.split() if w.strip()]
+    is_single_word = len(target_words) == 1
+
     max_len_diff = 2 if len(target_name) <= 5 else 3
     scores = []
     for val in df[match_col]:
@@ -95,19 +98,25 @@ def fuzzy_rerank(
         else:
             val_clean = val.strip()
             val_lower = val_clean.lower()
-            words = [w.strip() for w in val_lower.split() if w.strip()]
             
-            best_word_score = 0.0
-            for word in words:
-                len_diff = abs(len(word) - len(target_lower))
-                is_prefix_match = len(target_lower) >= 5 and word.startswith(target_lower)
-                if len_diff <= max_len_diff or is_prefix_match:
-                    score = JaroWinkler.similarity(target_lower, word)
-                    if score > 1.0:
-                        score = score / 100.0
-                    if score > best_word_score:
-                        best_word_score = score
-            scores.append(best_word_score)
+            if is_single_word:
+                best_score = 0.0
+                words = [w.strip() for w in val_lower.split() if w.strip()]
+                for word in words:
+                    len_diff = abs(len(word) - len(target_lower))
+                    is_prefix_match = len(target_lower) >= 5 and word.startswith(target_lower)
+                    if len_diff <= max_len_diff or is_prefix_match:
+                        word_score = JaroWinkler.similarity(target_lower, word)
+                        if word_score > 1.0:
+                            word_score = word_score / 100.0
+                        if word_score > best_score:
+                            best_score = word_score
+            else:
+                best_score = JaroWinkler.similarity(target_lower, val_lower)
+                if best_score > 1.0:
+                    best_score = best_score / 100.0
+                            
+            scores.append(best_score)
 
     df_copy = df.copy()
     df_copy["similarity_score"] = scores
