@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from config.settings import settings
-from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41, RELATIONSHIPS, TABLES
+from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41, RAJASTHAN_CITIES, RAJASTHAN_BLOCKS, RELATIONSHIPS, TABLES
 from embeddings.faiss_store import FaissSchemaStore
 
 
@@ -25,7 +25,7 @@ MINORITY_TERMS   = {"minority", "muslim", "muslims", "jain", "jains"}
 EDUCATION_TERMS  = {"education", "qualification", "illiterate", "literate",
                     "graduate", "school", "pass", "matric", "intermediate"}
 RURAL_TERMS      = {"rural", "urban", "village people", "city families"}
-GEOGRAPHY_TERMS  = {d.lower() for d in RAJASTHAN_DISTRICTS_41} | {
+GEOGRAPHY_TERMS  = {d.lower() for d in RAJASTHAN_DISTRICTS_41 + RAJASTHAN_CITIES + RAJASTHAN_BLOCKS} | {
     "district", "zilla", "block", "village", "ward", "panchayat",
 }
 LOCATION_PREPOSITIONS = {"in", "from", "at"}

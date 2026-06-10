@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz, process
 
-from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41
+from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41, RAJASTHAN_CITIES, RAJASTHAN_BLOCKS
 
 
 COMMON_CANONICAL_TERMS = {
@@ -138,8 +138,10 @@ class QueryNormalizer:
                 return token
                 
             if is_location_protected and score < 95:
-                is_district = (self.correction_candidates[matched] in RAJASTHAN_DISTRICTS_41)
-                if not is_district:
+                # Allow fuzzy match for any known place (district, city, block) even if < 95
+                known_places = set(RAJASTHAN_DISTRICTS_41 + RAJASTHAN_CITIES + RAJASTHAN_BLOCKS)
+                is_known_place = (self.correction_candidates[matched] in known_places)
+                if not is_known_place:
                     return token
                 
             replacement = self.correction_candidates[matched]
@@ -154,9 +156,10 @@ class QueryNormalizer:
 
     def _build_accepted_terms(self) -> set[str]:
         accepted: set[str] = set()
-        for district in RAJASTHAN_DISTRICTS_41:
-            accepted.update(re.findall(r"[a-zA-Z]+", district.lower()))
-            accepted.add(district.lower())
+        all_places = RAJASTHAN_DISTRICTS_41 + RAJASTHAN_CITIES + RAJASTHAN_BLOCKS
+        for place in all_places:
+            accepted.update(re.findall(r"[a-zA-Z]+", place.lower()))
+            accepted.add(place.lower())
         for aliases in COMMON_CANONICAL_TERMS.values():
             for alias in aliases:
                 accepted.add(alias.lower())
@@ -178,7 +181,9 @@ class QueryNormalizer:
             "caste": "caste",
             "district": "district",
         }
-        candidates.update({district.lower(): district for district in RAJASTHAN_DISTRICTS_41})
+        all_places = RAJASTHAN_DISTRICTS_41 + RAJASTHAN_CITIES + RAJASTHAN_BLOCKS
+        for place in all_places:
+            candidates[place.lower()] = place
         return candidates
 
 

@@ -71,24 +71,73 @@ print(f"{passed_fast}/{len(simple_queries)} Fast Path tests passed\n")
 
 print("=== Testing AST Swapping ===")
 cached_q = "Show me males in Jaipur"
-cached_sql = "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Male' AND district = 'JAIPUR';"
+# Cached SQL now uses Title Case districts (matching DB)
+cached_sql = "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Male' AND district = 'Jaipur';"
 
 swap_tests = [
-    ("Show me females in Jaipur", True, "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Female' AND district = 'JAIPUR';"),
-    ("Show me males in Jodhpur", True, "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Male' AND district = 'JODHPUR';"),
-    ("Show me boys in Jaipur", False, None),
-    ("Show me females in Jodhpur", True, "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Female' AND district = 'JODHPUR';"),
+    ("Show me females in Jaipur",  True,  "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Female' AND district = 'Jaipur';"),
+    ("Show me males in Jodhpur",   True,  "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Male' AND district = 'Jodhpur';"),
+    ("Show me boys in Jaipur",     False, None),
+    ("Show me females in Jodhpur", True,  "SELECT member_name, age, gender, district FROM citizen WHERE gender = 'Female' AND district = 'Jodhpur';"),
 ]
 
 passed_swap = 0
-for new_q, expected, expected_sql in swap_tests:
-    sql = fast.swap_ast_parameters(cached_sql, cached_q, new_q)
-    success = (sql is not None)
-    if success == expected and (not expected or sql == expected_sql):
+for new_q, should_swap, expected_sql in swap_tests:
+    result = fast.swap_ast_parameters(cached_sql, cached_q, new_q)
+    swapped = result is not None
+    ok = (swapped == should_swap) and (result == expected_sql if expected_sql else True)
+    if ok:
         passed_swap += 1
-        print(f"[OK] {new_q} -> {sql}")
+        print(f"[OK] {new_q} -> {result}")
     else:
-        print(f"[FAIL] {new_q}\n  Expected: {expected_sql}\n  Got:      {sql}")
-
+        print(f"[FAIL] {new_q}")
+        print(f"  Expected: {expected_sql}")
+        print(f"  Got:      {result}")
 print(f"{passed_swap}/{len(swap_tests)} Swap tests passed\n")
+
+
+print("=== Testing Numeric Operator Swapping ===")
+numeric_cached_sql = "SELECT member_name, age, gender, district FROM citizen WHERE age > 50;"
+numeric_swap_tests = [
+    ("people above 50", "people above 60", "age > 60"),
+    ("people above 50", "people above 75", "age > 75"),
+]
+passed_num = 0
+for old_q, new_q, fragment in numeric_swap_tests:
+    result = fast.swap_ast_parameters(numeric_cached_sql, old_q, new_q)
+    ok = result and fragment in result
+    if ok:
+        passed_num += 1
+        print(f"[OK] '{old_q}' -> '{new_q}' => {result}")
+    else:
+        print(f"[FAIL] '{old_q}' -> '{new_q}'")
+        print(f"  Expected fragment: {fragment}")
+        print(f"  Got: {result}")
+print(f"{passed_num}/{len(numeric_swap_tests)} Numeric swap tests passed\n")
+
+
+print("=== Testing Education & District Fixes ===")
+educ_tests = [
+    ("Show illiterate people",        "LOWER(education) = 'illiterate'"),
+    ("Show uneducated rural females",  "LOWER(education) = 'illiterate'"),
+    ("Show graduate farmers",          "education LIKE '%Graduate%'"),
+    ("Show females in ganganagar",     "district = 'Sri Ganganagar'"),
+    ("Show males in kotputli",         "district = 'Kotputli-Behror'"),
+    ("Show people with bank account",  "bank_account IS NOT NULL"),
+    ("Show unbanked people in Jaipur", "bank_account IS NULL"),
+]
+passed_educ = 0
+for q, fragment in educ_tests:
+    sql = fast.generate_sql_fast(q)
+    ok = sql and fragment in sql
+    if ok:
+        passed_educ += 1
+        print(f"[OK] {q}")
+        print(f"     => {sql}")
+    else:
+        print(f"[FAIL] {q}")
+        print(f"  Expected fragment: {fragment}")
+        print(f"  Got: {sql}")
+print(f"{passed_educ}/{len(educ_tests)} Education/District tests passed")
+
 

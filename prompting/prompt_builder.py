@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 
-from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41
+from database.schema_metadata import COLUMNS, RAJASTHAN_DISTRICTS_41, RAJASTHAN_CITIES, RAJASTHAN_BLOCKS
 from retrieval.schema_retriever import RetrievalResult
 
 
 _DISTRICTS_LOWER: dict[str, str] = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
+_CITIES_LOWER: dict[str, str] = {c.lower(): c for c in RAJASTHAN_CITIES}
+_BLOCKS_LOWER: dict[str, str] = {b.lower(): b for b in RAJASTHAN_BLOCKS}
 
 # ── Few-shot examples (teach the LLM the schema once) ────────────────────────
 _FEW_SHOT = """
@@ -63,15 +65,19 @@ class PromptBuilder:
         location_hints = _extract_location_hints(result.question)
         location_notes: list[str] = []
         for token in location_hints:
-            canonical = _DISTRICTS_LOWER.get(token.lower().strip())
-            if canonical:
-                location_notes.append(
-                    f"  - '{token}' is a known district → use: district = '{canonical}'"
-                )
+            token_lower = token.lower().strip()
+            canonical_d = _DISTRICTS_LOWER.get(token_lower)
+            canonical_c = _CITIES_LOWER.get(token_lower)
+            canonical_b = _BLOCKS_LOWER.get(token_lower)
+            
+            if canonical_d:
+                location_notes.append(f"  - '{token}' is a known district → use: district = '{canonical_d}'")
+            elif canonical_c:
+                location_notes.append(f"  - '{token}' is a known city → use: city = '{canonical_c}'")
+            elif canonical_b:
+                location_notes.append(f"  - '{token}' is a known block → use: block = '{canonical_b}'")
             else:
-                location_notes.append(
-                    f"  - '{token}' is NOT a district → use: block LIKE '%{token}%' OR village LIKE '%{token}%'"
-                )
+                location_notes.append(f"  - '{token}' is an unknown location → use: district = '{token}' (the system will automatically search all location columns)")
         location_block = ""
         if location_notes:
             location_block = "\nLocation pre-classification (use exactly as written):\n" + "\n".join(location_notes)

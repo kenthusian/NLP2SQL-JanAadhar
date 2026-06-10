@@ -42,22 +42,37 @@ _OCCUPATION_MAP = {
 }
 
 _EDUCATION_MAP = {
-    "illiterate": "Illiterate", "uneducated": "Illiterate",
+    # 'illiterate' is stored lowercase in DB; all others are Title Case
+    "illiterate": "illiterate", "uneducated": "illiterate",
     "literate": "Literate", "educated": "Literate",
     "graduate": "Graduate",
     "post graduate": "Post Graduate",
-    "secondary": "Secondary",
-    "senior secondary": "Senior Secondary",
+    "5th pass": "5 Pass", "8th pass": "8 Pass",
+    "10th pass": "10 Pass", "matric": "10 Pass",
+    "12th pass": "12 Pass", "intermediate": "12 Pass",
 }
 
+# Districts in Title Case — must match exactly what is stored in the database
 _DISTRICTS = [
-    "AJMER", "ALWAR", "BANSWARA", "BARAN", "BARMER", "BHARATPUR", "BHILWARA",
-    "BIKANER", "BUNDI", "CHITTORGARH", "CHURU", "DAUSA", "DHOLPUR", "DUNGARPUR",
-    "HANUMANGARH", "JAIPUR", "JAISALMER", "JALORE", "JHALAWAR", "JHUNJHUNU",
-    "JODHPUR", "KARAULI", "KOTA", "NAGAUR", "PALI", "PRATAPGARH", "RAJSAMAND",
-    "SAWAI MADHOPUR", "SIKAR", "SIROHI", "SRI GANGANAGAR", "TONK", "UDAIPUR"
+    "Ajmer", "Alwar", "Balotra", "Banswara", "Baran", "Barmer", "Beawar",
+    "Bharatpur", "Bhilwara", "Bikaner", "Bundi", "Chittorgarh", "Churu",
+    "Dausa", "Deeg", "Didwana-Kuchaman", "Dholpur", "Dungarpur", "Hanumangarh",
+    "Jaipur", "Jaisalmer", "Jalore", "Jhalawar", "Jhunjhunu", "Jodhpur",
+    "Karauli", "Khairthal-Tijara", "Kota", "Kotputli-Behror", "Nagaur", "Pali",
+    "Phalodi", "Pratapgarh", "Rajsamand", "Salumbar", "Sawai Madhopur", "Sikar",
+    "Sirohi", "Sri Ganganagar", "Tonk", "Udaipur",
 ]
+# Maps lowercase user input → canonical DB-matching Title Case value
 _DISTRICT_MAP = {d.lower(): d for d in _DISTRICTS}
+# Short-name aliases for districts with long compound names
+_DISTRICT_MAP.update({
+    "ganganagar": "Sri Ganganagar",
+    "kotputli": "Kotputli-Behror",
+    "didwana": "Didwana-Kuchaman",
+    "khairthal": "Khairthal-Tijara",
+    "sawai": "Sawai Madhopur",
+    "madhopur": "Sawai Madhopur",
+})
 
 _AGE_PATTERNS = [
     (r"\bsenior\s+citizen\b|\belderly\b|\bold\s+age\b", ">=", 60),
@@ -81,7 +96,9 @@ _STOPWORDS = {
     "and", "or", "for", "from", "where", "are", "is", "who", "whom", "that", "which",
     "give", "me", "list", "details", "find", "get", "display", "citizens", "people",
     "members", "person", "persons", "count", "number", "those", "their", "has", "been",
-    "to", "on", "any", "some", "youth"
+    "to", "on", "any", "some", "youth",
+    # Bank-related words consumed partially by bank patterns
+    "bank", "account", "accounts",
 }
 
 _COMPLEX_KEYWORDS = {

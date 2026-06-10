@@ -46,6 +46,55 @@ DISTRICT_ALIASES = [
     *[d.lower() for d in RAJASTHAN_DISTRICTS_41],
     "kotputli", "ganganagar",
 ]
+# ── Cities (towns/tehsil HQs stored in the `city` column) ────────────────────
+RAJASTHAN_CITIES = [
+    "Ajmer", "Alwar", "Bagru", "Bansur", "Banswara", "Beawar", "Bhadra",
+    "Bhilwara", "Bidasar", "Bikaner", "Borawar", "Bundi", "Chirawa", "Chomu",
+    "Churu", "Dholpur", "Dudu", "Dundlod", "Gangapur City", "Hamirgarh",
+    "Hindaun", "Jaipur", "Jayal", "Jodhpur", "Kapasan", "Khairthal", "Kota",
+    "Kotputli", "Laxmangarh", "Malakhera", "Malpura", "Mandawa", "Mawli",
+    "Nagaur", "Neem Ka Thana", "Nimbahera", "Nokha", "Pali",
+    "Partapur -Garhi", "Pilibanga", "Pipar City", "Rajgarh", "Ramgarh",
+    "Ratangarh", "Sadulshahar", "Sambhar", "Sanchore", "Sawai Madhopur",
+    "Sikar", "Siwana", "Sri Ganganagar", "Sri Karanpur", "Sujangarh",
+    "Sultanpur", "Sumerpur", "Tibbi", "Tinwari", "Tonk", "Uchchain", "Udaipur",
+]
+
+# ── Blocks (sub-district blocks stored in the `block` column) ─────────────────
+RAJASTHAN_BLOCKS = [
+    "Aadel", "Aau", "Abu Road", "Ajeetgarh", "Alsisar", "Anupgarh", "Arain",
+    "BAYTOO", "BHIM", "Badnor", "Balesar", "Bali", "Bamanwas", "Bandikui",
+    "Banera", "Bansur", "Bari Sadri", "Barmer", "Barmer Rural", "Bhadesar",
+    "Bhadra", "Bhawani Mandi", "Bherunda", "Bhinay", "Bhinmal", "Bhopalgarh",
+    "Bhupalsagar", "Bhusawar", "Bikaner", "Buhana", "Chaksu", "Chhabra",
+    "Chhipabarod", "Chhotisadri", "Chirawa", "Chohtan", "Churu",
+    "Danta Ramgarh", "Deeg", "Degana", "Deoli", "Dhanaoo", "Dhawa", "Dhod",
+    "Dhorimanna", "Didwana", "Dungla", "Fagliya", "Fatehpur", "Fathegarh",
+    "Ganganagar", "Ghantiyali", "Gira", "Girwa", "Gogunda", "Govindgarh",
+    "Gudamalani", "HADAN", "Hanumangarh", "Hindaun", "Hindoli", "Hurda",
+    "Itawa", "Jahazpur", "Jaitaran", "Jalore", "Jalsoo", "Jamwa Ramgarh",
+    "Jawaja", "Jayal", "Jhadol", "Jhotwara", "Jobner", "Kalyanpur", "Kaman",
+    "Kapasan", "Kareda", "Kathumar", "Kekri", "Keru", "Khairabad", "Khajuwala",
+    "Khandar", "Khandela", "Khanpur", "Khetri", "Khinwsar", "Kishangarh",
+    "Kishangarh Renwal", "Kotputli", "Kotri", "Kuchaman City", "Kumher",
+    "Ladnu", "Ladpura", "Laxmangarh", "Lohawat", "Luni", "Lunkaransar",
+    "Madhorajpura", "Mahwa", "Makrana", "Malpura", "Mandal", "Mandalgarh",
+    "Mandawa", "Mandor", "Manohar Thana", "Marwar Junction", "Masuda",
+    "Maulasar", "Mauzamabad", "Merta", "Mundwa", "Nachana", "Nadbai", "Nadoti",
+    "Nagar", "Nagaur", "Nainwa", "Nawalgarh", "Nawan", "Nechwa", "Neemkathana",
+    "Niwai", "Nohar", "Nokha", "Osian", "Padampur", "Palsana", "Panchoo",
+    "Paota", "Parbatsar", "Patodi", "Peeplu", "Peesangan", "Phagi", "Pilani",
+    "Pindwara", "Pipar City", "Pirawa", "Poogal", "Railmagra", "Rajakhera",
+    "Rajgarh", "Ramgarh Pachwara", "Ramsar", "Rani Station", "Ratangarh",
+    "Rawatsar", "Reodar", "Rupwas", "Sabla", "Sadulshahar", "Sambhar",
+    "Sanchore", "Sanganer", "Sangria", "Sardarshahar", "Sarwar", "Serwa",
+    "Sewar", "Shahpura", "Shekhala", "Sheo", "Shergarh", "Shri Mahaveer Ji",
+    "Shridungargarh", "Sindhari", "Singhana", "Siwana", "Sojat", "Srimadhopur",
+    "Srinagar", "Sujangarh", "Surajgarh", "Suratgarh", "Suwana", "Taranagar",
+    "Tibbi", "Tinwari", "Todaraisingh", "Tunga", "Uchain", "Udaipurwati",
+    "Uniara", "Weir",
+]
+
 
 # ── Single table ──────────────────────────────────────────────────────────────
 TABLES: list[TableMeta] = [
@@ -64,9 +113,9 @@ COLUMNS: list[ColumnMeta] = [
     ColumnMeta("citizen", "is_rural",       "1 = rural village, 0 = urban city",
                "integer", ["rural", "urban", "village", "city dwellers"], True, ["1", "0"]),
     ColumnMeta("citizen", "block",          "Administrative block / tehsil",
-               "string", ["block", "tehsil", "subdistrict"], True),
+               "string", ["block", "tehsil", "subdistrict"], True, RAJASTHAN_BLOCKS),
     ColumnMeta("citizen", "city",           "City name (urban citizens only; NULL for rural)",
-               "string", ["city", "town", "urban area"], True),
+               "string", ["city", "town", "urban area"], True, RAJASTHAN_CITIES),
     ColumnMeta("citizen", "ward",           "Municipal ward (urban only)",
                "string", ["ward"], True),
     ColumnMeta("citizen", "gram_panchayat", "Gram panchayat (rural only)",

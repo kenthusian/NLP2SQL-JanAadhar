@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from config.settings import settings
 from database.excel_importer import import_excel_dataset
 from database.query_results import execute_select_preview
-from database.schema_metadata import RAJASTHAN_DISTRICTS_41
+from database.schema_metadata import RAJASTHAN_DISTRICTS_41, RAJASTHAN_CITIES, RAJASTHAN_BLOCKS
 from embeddings.faiss_store import FaissSchemaStore
 from llm.ollama_client import OllamaModelManager, OllamaSqlGenerator, _clean_sql
 from normalization.query_normalizer import normalize_query
@@ -26,11 +26,29 @@ from validation.sql_validator import SQLValidator
 from caching.semantic_cache import SemanticCache
 
 
+<<<<<<< HEAD
 # ── District lookups ─────────────────────────────────────────────────────────
 _DISTRICT_LOWER: dict[str, str] = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
 _DISTRICTS_LOWER: set[str]       = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
 _DISTRICT_CANONICAL              = _DISTRICT_LOWER  # alias for clarity
 
+=======
+# ── District / City / Block lookups ─────────────────────────────────────────
+_DISTRICT_LOWER: dict[str, str]  = {d.lower(): d for d in RAJASTHAN_DISTRICTS_41}
+_DISTRICTS_LOWER: set[str]       = {d.lower() for d in RAJASTHAN_DISTRICTS_41}
+_DISTRICT_CANONICAL              = _DISTRICT_LOWER  # alias for clarity
+
+_CITY_LOWER: dict[str, str]      = {c.lower(): c for c in RAJASTHAN_CITIES}
+_CITIES_LOWER: set[str]          = {c.lower() for c in RAJASTHAN_CITIES}
+
+_BLOCK_LOWER: dict[str, str]     = {b.lower(): b for b in RAJASTHAN_BLOCKS}
+_BLOCKS_LOWER: set[str]          = {b.lower() for b in RAJASTHAN_BLOCKS}
+
+# All known place names (district + city + block) — anything outside this set
+# is an unknown locality and should be searched across all sub-location cols.
+_ALL_KNOWN_PLACES: set[str] = _DISTRICTS_LOWER | _CITIES_LOWER | _BLOCKS_LOWER
+
+>>>>>>> 81f0e8c (Robust location resolver for cities, blocks, and sub-locations, plus fixes for AND-to-OR query parsing)
 # ── No-bank query signals ─────────────────────────────────────────────────────
 _NO_BANK_WORDS = [
     "no bank", "without bank", "don't have", "do not have",
@@ -328,6 +346,7 @@ def _post_process_sql(sql: str, fuzzy_target: str | None = None) -> str:  # noqa
         for table in tree.find_all(exp.Table):
             if table.name.lower() in ("member", "family", "bank_details"):
                 table.set("this", exp.Identifier(this="citizen"))
+<<<<<<< HEAD
 
         # 2. Strip table-qualifier prefixes (e.g. citizen.age → age)
         for col in tree.find_all(exp.Column):
@@ -424,6 +443,266 @@ def _post_process_sql(sql: str, fuzzy_target: str | None = None) -> str:  # noqa
         tree = tree.transform(_transform)
         sql = tree.sql(dialect="sqlite") + ";"
 
+=======
+
+        # 2. Strip table-qualifier prefixes (e.g. citizen.age → age)
+        for col in tree.find_all(exp.Column):
+            if col.table:
+                col.set("table", None)
+
+        # 3. Convert mutually exclusive ANDs on the same column to ORs
+        #    (e.g. district = 'X' AND district = 'Y'  →  (district = 'X' OR district = 'Y'))
+        #    Also handles IN(...) nodes with same column, and strips nested ANDs.
+        def _transform_and(node):
+            if not isinstance(node, exp.Where):
+                return node
+
+            # Recursively flatten any top-level AND chain
+            if isinstance(node.this, exp.And):
+                conds = list(node.this.flatten())
+            else:
+                conds = [node.this]
+
+            col_conds: dict[str, list] = {}
+            other_conds = []
+            for c in conds:
+                col_name = None
+                if isinstance(c, (exp.EQ, exp.Like)) and isinstance(c.left, exp.Column):
+                    col_name = c.left.name.lower()
+                elif isinstance(c, exp.In) and isinstance(c.this, exp.Column):
+                    col_name = c.this.name.lower()
+                if col_name is not None:
+                    col_conds.setdefault(col_name, []).append(c)
+                else:
+                    other_conds.append(c)
+
+            new_conds = []
+            for c_list in col_conds.values():
+                if len(c_list) > 1:
+                    # Expand each IN(...) to individual EQ nodes before OR-ing
+                    flat = []
+                    for c in c_list:
+                        if isinstance(c, exp.In):
+                            left_col = c.this
+                            for e in c.expressions:
+                                flat.append(exp.EQ(this=left_col.copy(), expression=e.copy()))
+                        else:
+                            flat.append(c)
+                    new_conds.append(exp.Paren(this=exp.or_(*flat)))
+                else:
+                    new_conds.append(c_list[0])
+
+            new_conds.extend(other_conds)
+            if new_conds:
+                node.set('this', exp.and_(*new_conds))
+            return node
+
+        tree = tree.transform(_transform_and)
+
+        def _make_location_search(val: str) -> exp.Expression:
+            """Build: (TRIM(city) LIKE '%v%' OR TRIM(block) LIKE '%v%' OR
+                       TRIM(gram_panchayat) LIKE '%v%' OR TRIM(village) LIKE '%v%')"""
+            def _like(col_name: str) -> exp.Like:
+                return exp.Like(
+                    this=exp.Anonymous(this="TRIM", expressions=[exp.column(col_name)]),
+                    expression=exp.Literal.string(f"%{val}%"),
+                )
+            return exp.Paren(
+                this=exp.or_(_like("city"), _like("block"),
+                              _like("gram_panchayat"), _like("village"))
+            )
+
+        def _transform(node):
+            # ── Handle IN (...) nodes ─────────────────────────────────────────
+            if isinstance(node, exp.In):
+                left = node.this
+                if not isinstance(left, exp.Column):
+                    return node
+                col_in = left.name.lower()
+
+                if col_in in ("district", "city", "block", "gram_panchayat",
+                              "village", "ward"):
+                    new_exprs = []
+                    for e in node.expressions:
+                        if not (isinstance(e, exp.Literal) and e.is_string):
+                            continue
+                        orig_v = e.name
+                        val_v = orig_v.replace("%", "").strip()
+                        val_lower = val_v.lower()
+
+                        if col_in == "district":
+                            canonical = _DISTRICT_CANONICAL.get(val_lower)
+                            if canonical:
+                                new_exprs.append(
+                                    exp.EQ(this=left.copy(),
+                                           expression=exp.Literal.string(canonical))
+                                )
+                            elif val_lower not in _ALL_KNOWN_PLACES and val_lower:
+                                new_exprs.append(_make_location_search(val_v))
+                            # else: val is a known block/city but LLM put it in district
+                            elif val_lower in _CITIES_LOWER:
+                                c = _CITY_LOWER[val_lower]
+                                new_exprs.append(exp.Like(
+                                    this=exp.Anonymous(this="TRIM",
+                                                       expressions=[exp.column("city")]),
+                                    expression=exp.Literal.string(f"%{c}%"),
+                                ))
+                            elif val_lower in _BLOCKS_LOWER:
+                                b = _BLOCK_LOWER[val_lower]
+                                new_exprs.append(exp.Like(
+                                    this=exp.Anonymous(this="TRIM",
+                                                       expressions=[exp.column("block")]),
+                                    expression=exp.Literal.string(f"%{b}%"),
+                                ))
+                        elif col_in == "city":
+                            c = _CITY_LOWER.get(val_lower, val_v)
+                            new_exprs.append(exp.Like(
+                                this=exp.Anonymous(this="TRIM",
+                                                   expressions=[exp.column("city")]),
+                                expression=exp.Literal.string(f"%{c}%"),
+                            ))
+                        elif col_in == "block":
+                            b = _BLOCK_LOWER.get(val_lower, val_v)
+                            new_exprs.append(exp.Like(
+                                this=exp.Anonymous(this="TRIM",
+                                                   expressions=[exp.column("block")]),
+                                expression=exp.Literal.string(f"%{b}%"),
+                            ))
+                        else:
+                            new_exprs.append(exp.Like(
+                                this=exp.Anonymous(this="TRIM",
+                                                   expressions=[left.copy()]),
+                                expression=exp.Literal.string(f"%{val_v}%"),
+                            ))
+
+                    if not new_exprs:
+                        return node
+                    if len(new_exprs) == 1:
+                        return new_exprs[0]
+                    return exp.Paren(this=exp.or_(*new_exprs))
+
+            # ── Handle EQ / LIKE nodes ────────────────────────────────────────
+            if not isinstance(node, (exp.EQ, exp.Like)):
+                return node
+            left, right = node.left, node.right
+            if not isinstance(left, exp.Column):
+                return node
+            col = left.name.lower()
+            if not isinstance(right, exp.Literal) or not right.is_string:
+                return node
+            orig = right.name
+            val = orig.replace("%", "").strip()
+            val_lower = val.lower()
+
+            # Gender
+            if col == "gender":
+                if val_lower in ("male", "m", "boy", "boys", "man", "men", "gents",
+                                 "ladka", "ladke", "purusha"):
+                    right.set("this", "Male")
+                elif val_lower in ("female", "f", "girl", "girls", "woman", "women",
+                                   "ladies", "lady", "ladki", "mahila", "aurat"):
+                    right.set("this", "Female")
+
+            # Caste category
+            elif col == "caste_category":
+                MAP = {
+                    "general": "GEN", "gen": "GEN", "open": "GEN",
+                    "unreserved": "GEN", "forward": "GEN", "ur": "GEN",
+                    "obc": "OBC", "other backward": "OBC",
+                    "sc": "SC", "dalit": "SC", "scheduled caste": "SC",
+                    "st": "ST", "tribal": "ST", "adivasi": "ST",
+                }
+                if val_lower in MAP:
+                    right.set("this", MAP[val_lower])
+
+            # Marital status
+            elif col == "marital_status":
+                if val_lower in ("widowed", "widower"):
+                    right.set("this", "Widow")
+                elif val_lower in ("single", "bachelor", "spinster", "never married"):
+                    right.set("this", "Unmarried")
+
+            # is_rural
+            elif col == "is_rural":
+                if val_lower in ("rural", "true", "yes", "1"):
+                    return exp.EQ(this=left, expression=exp.Literal.number(1))
+                elif val_lower in ("urban", "false", "no", "0"):
+                    return exp.EQ(this=left, expression=exp.Literal.number(0))
+
+            # Education — illiterate stored lowercase; others use LIKE
+            elif col == "education":
+                if val_lower == "illiterate":
+                    return exp.EQ(
+                        this=exp.Lower(this=left),
+                        expression=exp.Literal.string("illiterate"),
+                    )
+                stripped = orig.replace("%", "")
+                return exp.Like(
+                    this=left,
+                    expression=exp.Literal.string(f"%{stripped}%"),
+                )
+
+            # bank_name → UPPER(col) LIKE '%UPPER_VAL%'
+            elif col == "bank_name":
+                val_stripped = orig.upper().replace("%", "")
+                return exp.Like(
+                    this=exp.Upper(this=left),
+                    expression=exp.Literal.string(f"%{val_stripped}%"),
+                )
+
+            # ── District — canonical lookup + unknown → location search ───────
+            elif col == "district":
+                canonical = _DISTRICT_CANONICAL.get(val_lower)
+                if canonical:
+                    return exp.EQ(this=left, expression=exp.Literal.string(canonical))
+                # If it's a known city or block, redirect to the right column
+                elif val_lower in _CITIES_LOWER:
+                    c = _CITY_LOWER[val_lower]
+                    return exp.Like(
+                        this=exp.Anonymous(this="TRIM", expressions=[exp.column("city")]),
+                        expression=exp.Literal.string(f"%{c}%"),
+                    )
+                elif val_lower in _BLOCKS_LOWER:
+                    b = _BLOCK_LOWER[val_lower]
+                    return exp.Like(
+                        this=exp.Anonymous(this="TRIM", expressions=[exp.column("block")]),
+                        expression=exp.Literal.string(f"%{b}%"),
+                    )
+                elif val_lower not in _ALL_KNOWN_PLACES and val_lower:
+                    # Completely unknown place — search city, block, gp, village
+                    return _make_location_search(val)
+
+            # ── City — canonical lookup → TRIM(city) LIKE '%...%' ─────────────
+            elif col == "city":
+                c = _CITY_LOWER.get(val_lower, val)  # fall back to original casing
+                return exp.Like(
+                    this=exp.Anonymous(this="TRIM", expressions=[left]),
+                    expression=exp.Literal.string(f"%{c}%"),
+                )
+
+            # ── Block — canonical lookup → TRIM(block) LIKE '%...%' ───────────
+            elif col == "block":
+                b = _BLOCK_LOWER.get(val_lower, val)
+                return exp.Like(
+                    this=exp.Anonymous(this="TRIM", expressions=[left]),
+                    expression=exp.Literal.string(f"%{b}%"),
+                )
+
+            # ── Other free-text / location sub-columns ───────────────────────
+            elif col in ("caste", "occupation", "member_name", "father_name",
+                         "mother_name", "spouse_name",
+                         "ward", "gram_panchayat", "village"):
+                if isinstance(node, exp.EQ):
+                    stripped = orig.replace("%", "")
+                    return exp.Like(
+                        this=exp.Anonymous(this="TRIM", expressions=[left]),
+                        expression=exp.Literal.string(f"%{stripped}%"),
+                    )
+
+            return node
+
+        tree = tree.transform(_transform)
+        sql = tree.sql(dialect="sqlite") + ";"
     # ── Regex pass 1: Caste bilingual group expansion ─────────────────────────
     def _caste_expand(match: re.Match) -> str:
         col = match.group(1)
@@ -456,31 +735,6 @@ def _post_process_sql(sql: str, fuzzy_target: str | None = None) -> str:  # noqa
     sql = re.sub(
         r"\b((?:\w+\.)?bank_name)\s+LIKE\s+'%?([^'%]+)%?'",
         _bank_upper, sql, flags=re.IGNORECASE,
-    )
-
-    # ── Regex pass 4: district LIKE → = for known districts ──────────────────
-    def _district_like(m: re.Match) -> str:
-        col, val = m.group(1), m.group(2).strip()
-        canonical = _DISTRICT_CANONICAL.get(val.lower())
-        return f"{col} = '{canonical}'" if canonical else m.group(0)
-
-    sql = re.sub(
-        r"\b((?:\w+\.)?district)\s+LIKE\s+'%?([^'%]+?)%?'",
-        _district_like, sql, flags=re.IGNORECASE,
-    )
-
-    # ── Regex pass 5: non-district location values → block/village redirect ───
-    def _district_redirect(m: re.Match) -> str:
-        prefix = m.group(1) or ""
-        val = (m.group(2) or m.group(3) or "").strip()
-        if not val or val.lower() in _DISTRICTS_LOWER:
-            return m.group(0)
-        return f"({prefix}block LIKE '%{val}%' OR {prefix}village LIKE '%{val}%')"
-
-    sql = re.sub(
-        r"\b((?:[A-Za-z_]\w*\.)?)"
-        r"district\s*(?:=\s*'([^']+)'|LIKE\s*'%([^'%]+)%')",
-        _district_redirect, sql, flags=re.IGNORECASE,
     )
 
     # ── Regex pass 6: COUNT(member.member_id) → COUNT(*) ─────────────────────
